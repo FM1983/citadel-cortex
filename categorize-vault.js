@@ -14,7 +14,7 @@ const { records } = JSON.parse(fs.readFileSync(IN, 'utf8'));
 console.log(`\n🧬 Categorizing ${records.length} records…`);
 
 // ─── Deterministic categorization ────────────────────────────────────────────
-const CATEGORIES = ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','LIGHTSPEED','ADMINISTRATION','TASTE','ARCHIVES','MISC'];
+const CATEGORIES = ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','OPERATIONS','LIGHTSPEED','ADMINISTRATION','TASTE','ARCHIVES','MISC'];
 
 function categorize(rec) {
     const p = (rec.relPath || '').toLowerCase();
@@ -61,6 +61,28 @@ function categorize(rec) {
         p.startsWith('media/') || p.includes('/media/') || p.includes('render') ||
         p.includes('masterplan') || p.includes('architect') || p.includes('drawing') ||
         p.includes('/plans/') || p.includes('blueprint') || p.includes('scheme')) return 'DESIGN';
+
+    // OPERATIONS — Stella's command-and-control cortex.
+    // ALL live-stream + ingested data lands here: Stella's brain, captures, sensorium,
+    // transcripts, voice notes, reminders, tasks, action items, day notes.
+    // Captured BEFORE LIGHTSPEED so Stella-Brain wins over the broader Citadel-AI rule.
+    if (p.includes('stella-brain')          || p.startsWith('stella-brain/')      ||
+        p.includes('/source mirrors/')      || p.startsWith('source mirrors/')    ||
+        p.includes('marius-captures')       || p.startsWith('marius-captures/')   ||
+        p.includes('/transcripts/')         || p.startsWith('transcripts/')       ||
+        p.includes('/recordings/')          || p.startsWith('recordings/')        ||
+        p.includes('/voice-notes/')         || p.startsWith('voice-notes/')       ||
+        p.includes('/day-notes/')           || p.startsWith('day-notes/')         ||
+        p.includes('/musings/')             || p.startsWith('musings/')           ||
+        p.includes('/reminders/')           || p.startsWith('reminders/')         ||
+        p.includes('/tasks/')               || p.startsWith('tasks/')             ||
+        p.includes('/actions/')             || p.startsWith('actions/')           ||
+        p.includes('/interactions/')        || p.startsWith('interactions/')      ||
+        p.includes('/ops/')                 || p.startsWith('ops/')               ||
+        t.startsWith('voice:')              || t.startsWith('day:')               ||
+        t.startsWith('op:')                 || t.startsWith('action:')            ||
+        t.startsWith('reminder:')           || t.startsWith('capture:')           ||
+        t.startsWith('musing:')             || t.startsWith('interaction:')      ) return 'OPERATIONS';
 
     // LIGHTSPEED — Citadel AI infrastructure: agents, automations, skills, prompts
     // Captured BEFORE PROJECTS so Lightspeed/ doesn't fall into property-projects bucket,
@@ -122,9 +144,13 @@ function keep(rec) {
     if (p.includes('/templates/') || p.includes('/_templates/')) return false;
     // drop hidden / node_modules / __pycache__
     if (p.includes('/node_modules/') || p.includes('/__pycache__/') || p.includes('/.git/')) return false;
-    // ── TASTE notes are short by design — keep them regardless of size ──
-    const isTaste = p.startsWith('taste/') || p.includes('/taste/');
-    if (!isTaste && (rec.wordCount || 0) < 40) return false;
+    // ── TASTE + OPERATIONS notes are short by design — keep regardless of size ──
+    const isShortByDesign =
+        p.startsWith('taste/') || p.includes('/taste/') ||
+        p.includes('stella-brain') || p.includes('marius-captures') ||
+        p.includes('source mirrors') || p.includes('/voice-notes/') ||
+        p.includes('/reminders/') || p.includes('/tasks/') || p.includes('/day-notes/');
+    if (!isShortByDesign && (rec.wordCount || 0) < 40) return false;
     // drop OS dotfiles
     if (t.startsWith('.')) return false;
     // skip CLAUDE.md / README.md scattered everywhere unless substantial

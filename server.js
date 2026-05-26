@@ -244,7 +244,7 @@ const NAVIGATOR_TOOLS = [
         description: "Visually isolate one cortex (dim all others), or 'ALL' to clear.",
         input_schema: {
             type: 'object',
-            properties: { cortex: { type: 'string', enum: ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','LIGHTSPEED','ADMINISTRATION','TASTE','ARCHIVES','MISC','ALL'] } },
+            properties: { cortex: { type: 'string', enum: ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','LIGHTSPEED','OPERATIONS','ADMINISTRATION','TASTE','ARCHIVES','MISC','ALL'] } },
             required: ['cortex'],
         },
     },

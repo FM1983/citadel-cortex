@@ -6,6 +6,9 @@
 
 const fs   = require('fs');
 const path = require('path');
+let EXTRA_ROOTS = [];
+try { ({ EXTRA_ROOTS = [] } = require('./config')); } catch (e) {}
+
 const { VAULT, CACHE } = require('./config');
 
 const FOLDER_GROUPS = {
@@ -13,10 +16,17 @@ const FOLDER_GROUPS = {
     'daily':6,'areas':7,'glossary':8,'meetings':9,'intel':10,
 };
 
+// Folders to skip during scan (heavy duplicates / noise that pollute the graph)
+const SKIP_FOLDERS = new Set([
+    'source mirrors',  // Stella's auto-mirror of content already in vault
+    '.git', '.obsidian', '.smart-env', '.claude', '.claudian',
+    'node_modules', '__pycache__', '.venv',
+]);
 function walkMd(dir, out=[]) {
     let entries; try { entries = fs.readdirSync(dir); } catch { return out; }
     for (const e of entries) {
         const full = path.join(dir, e);
+        if (SKIP_FOLDERS.has(e.toLowerCase())) continue;
         let stat; try { stat = fs.statSync(full); } catch { continue; }
         if (stat.isDirectory()) walkMd(full, out);
         else if (e.endsWith('.md')) out.push(full);
@@ -47,36 +57,46 @@ function groupFor(rel) {
     return 0;
 }
 
-console.log(`\n🔵 Scanning ${VAULT}…`);
 const t0 = Date.now();
-const files = walkMd(VAULT);
-console.log(`   ${files.length} files`);
+const records = [];
 
-const records = []; // { id, group, wordCount, links: [], aliases: [] }
-let processed = 0;
-const reportEvery = Math.max(100, Math.floor(files.length / 20));
+function scanRoot(rootPath, rootId) {
+    if (!fs.existsSync(rootPath)) { console.warn(`   ⚠ root missing: ${rootPath}`); return; }
+    console.log(`\n🔵 Scanning ${rootId ? '[' + rootId + ']' : 'main vault'}  ${rootPath}…`);
+    const files = walkMd(rootPath);
+    console.log(`   ${files.length} files`);
 
-for (const fp of files) {
-    let content='', stat; try { content = fs.readFileSync(fp,'utf8'); stat = fs.statSync(fp); } catch { continue; }
-    const rel   = path.relative(VAULT, fp);
-    const title = extractTitle(content, fp);
-    const fm    = parseFm(content);
-    const group = groupFor(rel);
-    const words = content.split(/\s+/).length;
-    const aliases = [
-        path.basename(fp,'.md'),
-        rel.replace(/\.md$/,'').split(path.sep).pop(),
-    ];
-    if (fm.aliases) fm.aliases.replace(/[\[\]"']/g,'').split(',').forEach(a=>aliases.push(a.trim()));
-    records.push({
-        id: title, group, wordCount: words,
-        mtime: stat ? stat.mtimeMs : 0,
-        links: extractLinks(content), aliases, relPath: rel,
-    });
-    processed++;
-    if (processed % reportEvery === 0) console.log(`   ${processed}/${files.length} (${Math.round(processed/files.length*100)}%)`);
+    let processed = 0;
+    const reportEvery = Math.max(100, Math.floor(files.length / 20));
+
+    for (const fp of files) {
+        let content='', stat; try { content = fs.readFileSync(fp,'utf8'); stat = fs.statSync(fp); } catch { continue; }
+        let rel = path.relative(rootPath, fp);
+        if (rootId) rel = rootId + '/' + rel.replace(/\\/g, '/');
+        const title = extractTitle(content, fp);
+        const fm    = parseFm(content);
+        const group = groupFor(rel);
+        const words = content.split(/\s+/).length;
+        const aliases = [
+            path.basename(fp,'.md'),
+            rel.replace(/\.md$/,'').split('/').pop(),
+        ];
+        if (fm.aliases) fm.aliases.replace(/[\[\]"']/g,'').split(',').forEach(a=>aliases.push(a.trim()));
+        records.push({
+            id: title, group, wordCount: words,
+            mtime: stat ? stat.mtimeMs : 0,
+            links: extractLinks(content), aliases, relPath: rel,
+            rootId: rootId || 'main',
+            absPath: fp,
+        });
+        processed++;
+        if (processed % reportEvery === 0) console.log(`   ${processed}/${files.length} (${Math.round(processed/files.length*100)}%)`);
+    }
 }
 
-fs.writeFileSync(CACHE, JSON.stringify({ generated: new Date().toISOString(), vault: VAULT, records }));
+scanRoot(VAULT, '');
+for (const extra of EXTRA_ROOTS) scanRoot(extra.path, extra.id);
+
+fs.writeFileSync(CACHE, JSON.stringify({ generated: new Date().toISOString(), vault: VAULT, extraRoots: EXTRA_ROOTS, records }));
 console.log(`\n✅  ${records.length} records → ${CACHE}`);
 console.log(`   Took ${((Date.now()-t0)/1000).toFixed(1)}s\n`);

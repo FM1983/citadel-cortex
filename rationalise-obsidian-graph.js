@@ -23,6 +23,7 @@ const COLORS = {
     ADMINISTRATION: C('8ee0ff'),
     RESEARCH:       C('5af0e8'),
     LIGHTSPEED:     C('b48cff'),
+    OPERATIONS:     C('4dabff'),
     PEOPLE:         C('ffb380'),
     CONTACTS:       C('ee9ce6'),
     TASTE:          C('ff9ec7'),

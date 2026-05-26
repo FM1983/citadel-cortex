@@ -66,6 +66,7 @@ const LOBES = {
     ADMINISTRATION: { center: [ 130,  370,  -20 ], radius: 230, color: '#8ee0ff', hex: 0x8ee0ff },  // soft sky
     RESEARCH:       { center: [ 280,  -90,  180 ], radius: 170, color: '#5af0e8', hex: 0x5af0e8 },  // turquoise
     LIGHTSPEED:     { center: [   0,   90, -380 ], radius: 180, color: '#b48cff', hex: 0xb48cff },  // electric violet
+    OPERATIONS:     { center: [   0,  320,  120 ], radius: 200, color: '#4dabff', hex: 0x4dabff },  // sapphire blue — Stella's command tower
     CONTACTS:       { center: [-420,   65,   60 ], radius: 130, color: '#ee9ce6', hex: 0xee9ce6 },  // soft pink
     PEOPLE:         { center: [-300,  210,  120 ], radius: 160, color: '#ffb380', hex: 0xffb380 },  // warm peach
     TASTE:          { center: [-280, -200,  260 ], radius: 150, color: '#ff9ec7', hex: 0xff9ec7 },  // warm coral pink
@@ -356,7 +357,7 @@ const HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>◆ CITADEL NEURAL CORTEX</title>
+<title>◆ CITADEL CORTEX COMMAND</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;background:radial-gradient(ellipse at 50% 55%,#06101f 0%,#020610 55%,#000005 100%);overflow:hidden;font-family:'Courier New',monospace;color:#9dd}
@@ -611,13 +612,13 @@ canvas{display:block;width:100%!important;height:100%!important}
 </style>
 </head>
 <body>
-<div id="loading"><div>◆ INITIALIZING CITADEL CORTEX ◆</div><div class="blink" style="font-size:11px;margin-top:14px;color:#0f9">FIRING SYNAPSES…</div></div>
+<div id="loading"><div>◆ INITIALISING CITADEL CORTEX COMMAND ◆</div><div class="blink" style="font-size:11px;margin-top:14px;color:#0f9">WAKING THE CORTEX…</div></div>
 <div id="scan"></div>
 <div id="vig"></div>
 
 <div id="hud">
   <div class="panel" id="tl">
-    <div class="pt">◆ CITADEL CORTEX</div>
+    <div class="pt">◆ CITADEL CORTEX COMMAND</div>
     <div class="st">NEURONS  <span id="sn" style="color:#0ff">—</span></div>
     <div class="st">SYNAPSES <span id="sl" style="color:#0ff">—</span></div>
     <div class="st">FIRING   <span id="sfire" style="color:#ff0">—</span></div>
@@ -634,6 +635,7 @@ canvas{display:block;width:100%!important;height:100%!important}
     <div class="legend-row" data-cat="DESIGN"><span style="color:#ffd28a">●</span> DESIGN</div>
     <div class="legend-row" data-cat="ADMINISTRATION"><span style="color:#8ee0ff">●</span> ADMINISTRATION</div>
     <div class="legend-row" data-cat="RESEARCH"><span style="color:#5af0e8">●</span> RESEARCH</div>
+    <div class="legend-row" data-cat="OPERATIONS"><span style="color:#4dabff">●</span> OPERATIONS · STELLA</div>
     <div class="legend-row" data-cat="LIGHTSPEED"><span style="color:#b48cff">●</span> LIGHTSPEED</div>
     <div class="legend-row" data-cat="PEOPLE"><span style="color:#ffb380">●</span> PEOPLE</div>
     <div class="legend-row" data-cat="CONTACTS"><span style="color:#ee9ce6">●</span> CONTACTS</div>
@@ -2713,6 +2715,7 @@ const defaults = {
     cADMINISTRATION: true,
     cRESEARCH:       true,
     cLIGHTSPEED:     true,
+    cOPERATIONS:     true,
     cPEOPLE:         true,
     cCONTACTS:       true,
     cTASTE:          true,
@@ -2829,11 +2832,11 @@ fLay.add(params, 'showAmbient').name('void dust').onChange(v => { ambient.visibl
 
 // ── CORTEXES folder (per-bucket toggles) ─────────────────────
 const fCor = gui.addFolder('Cortex Filter');
-['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','LIGHTSPEED','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(cat => {
+['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','LIGHTSPEED','OPERATIONS','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(cat => {
     fCor.add(params, 'c' + cat).name(cat).onChange(applyAll);
 });
-fCor.add({ all:  () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','LIGHTSPEED','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = true); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'all').name('✓ show all');
-fCor.add({ none: () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','LIGHTSPEED','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = false); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'none').name('✗ hide all');
+fCor.add({ all:  () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','LIGHTSPEED','OPERATIONS','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = true); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'all').name('✓ show all');
+fCor.add({ none: () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','LIGHTSPEED','OPERATIONS','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = false); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'none').name('✗ hide all');
 
 // ── CAMERA folder ────────────────────────────────────────────
 const fCam = gui.addFolder('Camera');
