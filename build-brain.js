@@ -1437,10 +1437,17 @@ function humanAge(days) {
     return Math.round(days / 365) + 'y ago';
 }
 
+// Tracks what's currently visible in the side panel — fed to /api/chat so
+// the existing mic/live FAB picks up "what's on screen" without a duplicate
+// mic button. Cleared when the panel is closed.
+let openPanelContext = null;
+
 async function showNodeInfo(idx) {
     const id = DATA.ids[idx];
     const relPath = DATA.paths[idx];
     const cat = DATA.cats[idx];
+    // Seed context with metadata; markdown body fills in once fetched.
+    openPanelContext = { idx, id, cat, relPath, text: '' };
 
     document.getElementById('sf').textContent = id.slice(0,18) + (id.length>18?'…':'');
     document.getElementById('np-title').textContent = id;
@@ -1475,6 +1482,11 @@ async function showNodeInfo(idx) {
         let md = j.content.replace(/^---\\s*\\n[\\s\\S]*?\\n---\\s*\\n/, '');
         md = md.replace(/\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]/g, (_, l, a) => '**' + (a || l) + '**');
         content.innerHTML = marked.parse(md);
+        // Make the markdown body visible to the chat agents so the central
+        // mic/live FAB is automatically context-aware to the open panel.
+        if (openPanelContext && openPanelContext.idx === idx) {
+            openPanelContext.text = md.slice(0, 3500);
+        }
 
         // ── BACKLINKS: who links TO this note (semantic only) ──────────
         const back = DATA.wikiIn[idx] || [];
@@ -1649,6 +1661,7 @@ function showCortexInfo(cat) {
 function clearSelection() {
     document.getElementById('note-panel').classList.remove('open');
     document.getElementById('sf').textContent = '—';
+    openPanelContext = null;          // drop on-screen context from chat payload
     applyNeighbourhood(null);
 }
 
@@ -2052,10 +2065,20 @@ async function chatSubmit(autoText) {
             daysOld: DATA.daysOld[i], degree: DATA.adj[i].length,
             path: DATA.paths[i] || '',
         }));
+        // If a note is open in the side panel, the user is almost certainly
+        // talking about it — surface that context so Marius doesn't need a
+        // duplicate mic button on the panel itself.
+        const viewing = openPanelContext ? {
+            idx:     openPanelContext.idx,
+            id:      openPanelContext.id,
+            cortex:  openPanelContext.cat,
+            relPath: openPanelContext.relPath,
+            excerpt: (openPanelContext.text || '').slice(0, 3000),
+        } : null;
         const r = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: chatConv, candidates }),
+            body: JSON.stringify({ messages: chatConv, candidates, viewing }),
         });
         const j = await r.json();
         chatHistory.pop();   // remove loading

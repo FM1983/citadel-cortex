@@ -309,21 +309,32 @@ async function executeNavigatorTool(name, input, candidateLookup, allCandidates)
             items: filtered.map(c => ({ idx: c.idx, id: c.id, cortex: c.cat, synapses: c.degree })) };
     }
     // ── Stella outbound tools ─────────────────────────────────────────────
+    // Gmail freshness pulls can take ~20s; keep timeout generous on workspace endpoints.
+    function stellaTimeoutFor(path) {
+        if (path.startsWith('/workspace/gmail')) return 35000;
+        if (path.startsWith('/workspace/calendar')) return 20000;
+        if (path.startsWith('/workspace/notion'))   return 20000;
+        if (path.startsWith('/filesystem'))         return 20000;
+        return 15000;
+    }
     async function stellaGet(path, qs) {
         if (!STELLA_TOKEN) return { error: 'Stella not configured' };
         try {
             const url = STELLA_URL + path + (qs ? '?' + new URLSearchParams(qs) : '');
-            const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 12000);
+            const ac = new AbortController(); const t = setTimeout(() => ac.abort(), stellaTimeoutFor(path));
             const r = await fetch(url, { headers: { 'x-stella-memory-token': STELLA_TOKEN }, signal: ac.signal });
             clearTimeout(t);
             if (!r.ok) return { error: path + ' ' + r.status + ': ' + (await r.text()).slice(0, 200) };
             return await r.json();
-        } catch (e) { return { error: e.message }; }
+        } catch (e) {
+            if (e.name === 'AbortError') return { error: 'Stella ' + path + ' timed out (>' + (stellaTimeoutFor(path)/1000) + 's) — Gmail freshness pulls can be slow' };
+            return { error: e.message };
+        }
     }
     async function stellaPost(path, body) {
         if (!STELLA_TOKEN) return { error: 'Stella not configured' };
         try {
-            const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 12000);
+            const ac = new AbortController(); const t = setTimeout(() => ac.abort(), stellaTimeoutFor(path));
             const r = await fetch(STELLA_URL + path, {
                 method: 'POST',
                 headers: { 'x-stella-memory-token': STELLA_TOKEN, 'Content-Type': 'application/json' },
@@ -332,20 +343,44 @@ async function executeNavigatorTool(name, input, candidateLookup, allCandidates)
             clearTimeout(t);
             if (!r.ok) return { error: path + ' ' + r.status + ': ' + (await r.text()).slice(0, 200) };
             return await r.json();
-        } catch (e) { return { error: e.message }; }
+        } catch (e) {
+            if (e.name === 'AbortError') return { error: 'Stella ' + path + ' timed out (>' + (stellaTimeoutFor(path)/1000) + 's)' };
+            return { error: e.message };
+        }
     }
 
     if (name === 'stella_gmail') {
         const j = await stellaGet('/workspace/gmail/search', { query: input.query, max_results: input.max_results || 8 });
         if (j.error) return j;
-        const items = (j.threads || j.messages || j.results || []).slice(0, 12);
+        const raw = (j.items || j.threads || j.messages || j.results || []).slice(0, 12);
+        // Pick salient fields so Marius doesn't drown in JSON noise.
+        const items = raw.map(m => ({
+            from:    m.sender || m.from || '',
+            subject: m.subject || '',
+            snippet: (m.snippet || m.body_preview || '').replace(/[‌\s]+/g, ' ').slice(0, 280),
+            thread_id: m.thread_id || m.message_id || '',
+        }));
         return { ok: true, count: items.length, results: items };
     }
     if (name === 'stella_gmail_priority') {
-        const j = await stellaGet('/workspace/gmail/priority', { max_results: input.max_results || 8 });
+        const j = await stellaGet('/workspace/gmail/priority', { max_results: input.max_results || 12 });
         if (j.error) return j;
-        const items = (j.threads || j.messages || j.results || []).slice(0, 12);
-        return { ok: true, count: items.length, results: items };
+        const raw = (j.items || j.threads || j.messages || j.results || []);
+        // Stella's classifier tags newsletters/marketing as priority:"noise" — strip them.
+        const useful = raw.filter(m => {
+            const p = String(m.priority || '').toLowerCase();
+            return p !== 'noise' && p !== 'marketing' && p !== 'newsletter';
+        }).slice(0, 12);
+        const items = useful.map(m => ({
+            from:     m.sender || m.from || '',
+            subject:  m.subject || '',
+            priority: m.priority || '',
+            reason:   m.reason || '',
+            action:   m.recommended_action || '',
+            snippet:  (m.snippet || m.body_preview || '').replace(/[‌\s]+/g, ' ').slice(0, 240),
+            thread_id: m.thread_id || m.message_id || '',
+        }));
+        return { ok: true, count: items.length, total_returned: raw.length, noise_filtered: raw.length - items.length, results: items };
     }
     if (name === 'stella_calendar') {
         const back = input.days_back || 0, fwd = input.days_forward || 14;
@@ -981,7 +1016,7 @@ http.createServer((req, res) => {
         req.on('end', async () => {
             let parsed;
             try { parsed = JSON.parse(body); } catch { return sendJSON(res, 400, { error: 'invalid JSON body' }); }
-            const { messages, candidates } = parsed;
+            const { messages, candidates, viewing } = parsed;
             if (!Array.isArray(messages) || !messages.length || !Array.isArray(candidates))
                 return sendJSON(res, 400, { error: 'missing messages[] or candidates[]' });
 
@@ -1040,11 +1075,23 @@ http.createServer((req, res) => {
                 'Candidate visible nodes (idx | cortex | days_old | title):',
                 table,
                 '',
+                // ── side-panel context (what's currently on the user's screen) ──
+                ...(viewing && viewing.id ? [
+                    '── ON-SCREEN NOTE (the user opened this in the side panel — assume questions reference it) ──',
+                    'Title:   ' + viewing.id,
+                    'Cortex:  ' + (viewing.cortex || '?'),
+                    'Path:    ' + (viewing.relPath || '?'),
+                    'idx:     ' + (typeof viewing.idx === 'number' ? viewing.idx : '?'),
+                    ...(viewing.excerpt ? ['Content excerpt (first ~3 KB):', viewing.excerpt] : []),
+                    '── END ON-SCREEN NOTE ──',
+                    '',
+                ] : []),
                 'Cortexes: PROJECTS, LITIGATION, PEOPLE, CONTACTS, DESIGN, RESEARCH, LIGHTSPEED, ADMINISTRATION, TASTE, ARCHIVES, MISC.',
                 '',
                 'Rules:',
                 ' • Tool indices MUST come from the candidate table OR from a search_vault / search_brain result; never invent.',
                 ' • Before saying "I can\'t find X in the vault", you MUST call search_vault(X) first. The candidate table is only the top 100 pre-filtered for your current query — most of the vault is outside it.',
+                ' • If an ON-SCREEN NOTE block is present above, the user is looking at it on their side panel. Treat ambiguous references ("this", "that one", "what does it say about X", "tell me more", "summarise this") as referring to it. You do NOT need to call read_note — the content excerpt is already in front of you.',
                 ' • Spoken voice — keep replies CONCISE (2-5 sentences). Voice is played back; long monologues are tiresome.',
                 ' • For LIVE questions (email, meetings, recent files, where am I) — call Stella tools, don\'t guess.',
                 ' • For KNOWN content questions — search_brain FIRST (it\'s indexed and fast). Only escalate to Stella tools if the brain comes up empty.',
