@@ -9,17 +9,21 @@
  */
 
 const fs   = require('fs');
-const { GRAPH_JSON: GRAPH } = require('./config');
+const path = require('path');
+
+const VAULT = '/Users/fm-sarsfield/Library/CloudStorage/Dropbox-CitadelCapital/Citadel Capital - Team Folder/Citadel-Main';
+const GRAPH = path.join(VAULT, '.obsidian', 'graph.json');
 
 // ── colour palette (matches build-brain.js LOBES) ────────────────────────────
 const C = (hex) => parseInt(hex, 16);
 const COLORS = {
-    PROJECTS:       C('00ff88'),
-    LITIGATION:     C('ff0044'),
-    DESIGN:         C('ffaa00'),
-    ADMINISTRATION: C('00ccff'),
-    CONTACTS:       C('ff00ff'),
-    ARCHIVES:       C('888888'),
+    PROJECTS:       C('7affc4'),
+    LITIGATION:     C('ff7a99'),
+    DESIGN:         C('ffd28a'),
+    ADMINISTRATION: C('8ee0ff'),
+    RESEARCH:       C('5af0e8'),
+    CONTACTS:       C('ee9ce6'),
+    ARCHIVES:       C('a8b0bd'),
 };
 
 if (!fs.existsSync(GRAPH)) { console.error(`\n❌  ${GRAPH} not found\n`); process.exit(1); }
@@ -67,6 +71,9 @@ const newCfg = {
 
         // DESIGN — design library, marketing collateral, media assets
         { query: 'path:"Citadel-Design-Library" OR path:Marketing OR path:Media OR render OR masterplan OR architect',  color: { a: 1, rgb: COLORS.DESIGN } },
+
+        // RESEARCH — intelligence work, briefings (before ADMIN so Citadel-Intel wins)
+        { query: 'path:Citadel-Intel OR briefing OR thesis OR perplexity',                              color: { a: 1, rgb: COLORS.RESEARCH       } },
 
         // CONTACTS — people files, master contact register
         { query: '"Master Contact Register" OR path:people',                                            color: { a: 1, rgb: COLORS.CONTACTS       } },

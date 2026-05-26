@@ -14,7 +14,7 @@ const { records } = JSON.parse(fs.readFileSync(IN, 'utf8'));
 console.log(`\n🧬 Categorizing ${records.length} records…`);
 
 // ─── Deterministic categorization ────────────────────────────────────────────
-const CATEGORIES = ['PROJECTS','LITIGATION','CONTACTS','DESIGN','ADMINISTRATION','ARCHIVES','MISC'];
+const CATEGORIES = ['PROJECTS','LITIGATION','CONTACTS','DESIGN','RESEARCH','ADMINISTRATION','ARCHIVES','MISC'];
 
 function categorize(rec) {
     const p = (rec.relPath || '').toLowerCase();
@@ -49,6 +49,15 @@ function categorize(rec) {
         p.includes('bealey') || p.includes('lightspeed') || p.includes('castra') ||
         p.includes('carrack') || p.includes('hyperion') || p.includes('barbarossa') ||
         p.startsWith('projects/')) return 'PROJECTS';
+
+    // RESEARCH — intelligence work, briefings, analysis, theses (must come before ADMIN)
+    if ((p.startsWith('citadel-intel/') || p.includes('/citadel-intel/')) && !p.includes('notionbuild')) return 'RESEARCH';
+    if (p.includes('/briefings/') || p.includes('/briefing/') || p.includes('/research/') ||
+        p.includes('/intel/') || p.includes('/analyses/') || p.includes('/theses/') ||
+        p.includes('perplexity')) return 'RESEARCH';
+    if (t.includes('briefing') || t.includes('thesis') || t.includes('analysis') ||
+        t.includes('research note') || t.includes('intel ') || t.startsWith('intel ') ||
+        t.includes('memo:') || t.includes('investigation')) return 'RESEARCH';
 
     // ADMINISTRATION — Admin folder, AI infra (excluding ClaudeCode which we filter out)
     if (p.startsWith('admin/') || p.includes('/admin/') ||

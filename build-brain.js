@@ -64,6 +64,7 @@ const LOBES = {
     LITIGATION:     { center: [ 420,  130,    0 ], radius: 180, color: '#ff7a99', hex: 0xff7a99 },  // soft rose
     DESIGN:         { center: [-180,  -90, -350 ], radius: 260, color: '#ffd28a', hex: 0xffd28a },  // soft amber
     ADMINISTRATION: { center: [ 130,  370,  -20 ], radius: 230, color: '#8ee0ff', hex: 0x8ee0ff },  // soft sky
+    RESEARCH:       { center: [ 280,  -90,  180 ], radius: 170, color: '#5af0e8', hex: 0x5af0e8 },  // turquoise
     CONTACTS:       { center: [-420,   65,   60 ], radius: 130, color: '#ee9ce6', hex: 0xee9ce6 },  // soft pink
     ARCHIVES:       { center: [   0, -310, -270 ], radius:  90, color: '#a8b0bd', hex: 0xa8b0bd },  // mist grey
     MISC:           { center: [   0, -380,  160 ], radius: 210, color: '#c9a8ff', hex: 0xc9a8ff },  // soft lavender
@@ -488,13 +489,14 @@ canvas{display:block;width:100%!important;height:100%!important}
   <div id="sw"><input id="si" type="text" placeholder="SEARCH NEURON…" autocomplete="off"></div>
   <div class="panel" id="tr">
     <div class="pt">CORTEX MAP</div>
-    <div class="legend-row" data-cat="PROJECTS"><span style="color:#00ff88">●</span> PROJECTS</div>
-    <div class="legend-row" data-cat="LITIGATION"><span style="color:#ff0044">●</span> LITIGATION</div>
-    <div class="legend-row" data-cat="DESIGN"><span style="color:#ffaa00">●</span> DESIGN</div>
-    <div class="legend-row" data-cat="ADMINISTRATION"><span style="color:#00ccff">●</span> ADMINISTRATION</div>
-    <div class="legend-row" data-cat="CONTACTS"><span style="color:#ff00ff">●</span> CONTACTS</div>
-    <div class="legend-row" data-cat="ARCHIVES"><span style="color:#888888">●</span> ARCHIVES</div>
-    <div class="legend-row" data-cat="MISC"><span style="color:#aa55ff">●</span> MISC</div>
+    <div class="legend-row" data-cat="PROJECTS"><span style="color:#7affc4">●</span> PROJECTS</div>
+    <div class="legend-row" data-cat="LITIGATION"><span style="color:#ff7a99">●</span> LITIGATION</div>
+    <div class="legend-row" data-cat="DESIGN"><span style="color:#ffd28a">●</span> DESIGN</div>
+    <div class="legend-row" data-cat="ADMINISTRATION"><span style="color:#8ee0ff">●</span> ADMINISTRATION</div>
+    <div class="legend-row" data-cat="RESEARCH"><span style="color:#5af0e8">●</span> RESEARCH</div>
+    <div class="legend-row" data-cat="CONTACTS"><span style="color:#ee9ce6">●</span> CONTACTS</div>
+    <div class="legend-row" data-cat="ARCHIVES"><span style="color:#a8b0bd">●</span> ARCHIVES</div>
+    <div class="legend-row" data-cat="MISC"><span style="color:#c9a8ff">●</span> MISC</div>
   </div>
   <div class="panel" id="bl">
     DRAG — rotate &nbsp; SCROLL — zoom<br>
@@ -908,6 +910,7 @@ const SKY_VERT = \`
 \`;
 
 const SKY_FRAG = \`
+  precision highp float;
   uniform float uTime;
   uniform float uIntensity;
   uniform float uHue;
@@ -915,8 +918,9 @@ const SKY_FRAG = \`
   uniform float uPulse;
   varying vec3 vDir;
 
-  // hash + simplex-style noise
+  // ── hash / noise / fbm ─────────────────────────────────────
   float hash(vec3 p){ p = fract(p * vec3(443.897, 441.423, 437.195)); p += dot(p, p.yzx + 19.19); return fract((p.x+p.y)*p.z); }
+  float h1(float x){ return fract(sin(x * 12.9898) * 43758.5453); }
   float noise(vec3 p){
     vec3 i = floor(p), f = fract(p);
     f = f*f*(3.0 - 2.0*f);
@@ -927,8 +931,30 @@ const SKY_FRAG = \`
   }
   float fbm(vec3 p){
     float v = 0.0, a = 0.5;
-    for(int i = 0; i < 5; i++){ v += a * noise(p); p *= 2.05; a *= 0.5; }
+    for(int i = 0; i < 6; i++){ v += a * noise(p); p *= 2.05; a *= 0.5; }
     return v;
+  }
+  // domain-warped fbm → filament-like nebula structure
+  float warpedFbm(vec3 p){
+    vec3 q = vec3(fbm(p + vec3(0.0, 0.0, 0.0)),
+                  fbm(p + vec3(5.2, 1.3, -2.1)),
+                  fbm(p + vec3(-3.1, 4.4, 7.7)));
+    return fbm(p + 2.5 * q);
+  }
+
+  // blackbody-ish star palette by random hash
+  vec3 starColor(float h){
+    // h ~ stellar class roll
+    vec3 hotBlue   = vec3(0.65, 0.78, 1.05);   // O / B
+    vec3 white     = vec3(1.0,  1.0,  1.0);    // A / F
+    vec3 sunYellow = vec3(1.0,  0.95, 0.78);   // G
+    vec3 orange    = vec3(1.0,  0.78, 0.50);   // K
+    vec3 red       = vec3(1.0,  0.58, 0.35);   // M giant
+    vec3 c = mix(hotBlue, white, smoothstep(0.0, 0.30, h));
+    c      = mix(c,        sunYellow, smoothstep(0.30, 0.55, h));
+    c      = mix(c,        orange,    smoothstep(0.55, 0.80, h));
+    c      = mix(c,        red,       smoothstep(0.80, 1.00, h));
+    return c;
   }
 
   vec3 hueShift(vec3 c, float h){
@@ -940,47 +966,81 @@ const SKY_FRAG = \`
     return toRGB * vec3(yiq.x, ch*cos(hue), ch*sin(hue));
   }
 
+  // ── star layer: voxel-cells, point-sample inside each cell ──
+  vec3 starLayer(vec3 d, float scale, float thresh, float coreRadius, float haloRadius, float twinkleAmp){
+    vec3 p   = d * scale;
+    vec3 ip  = floor(p);
+    vec3 fp  = fract(p);
+    float h  = hash(ip);
+    if (h < thresh) return vec3(0.0);
+
+    // star position inside cell
+    vec3 sp  = vec3(hash(ip+1.7), hash(ip+5.3), hash(ip+9.1));
+    float dist = length(fp - sp);
+
+    // bright core
+    float core = smoothstep(coreRadius, 0.0, dist);
+    // soft halo
+    float halo = smoothstep(haloRadius, 0.0, dist) * 0.35;
+
+    // twinkle modulated by per-star phase
+    float tw = 0.7 + twinkleAmp * sin(uTime * (1.5 + h * 3.0) + h * 47.0);
+
+    // colour from blackbody hash
+    float colorRoll = hash(ip + 3.3);
+    vec3  col       = starColor(colorRoll);
+
+    // magnitude — only top stars get strong intensity
+    float mag = pow((h - thresh) / (1.0 - thresh), 0.5);
+
+    return col * (core * 1.4 + halo) * mag * tw;
+  }
+
   void main(){
     vec3 d = normalize(vDir);
 
-    // global slow swirl
-    float t = uTime * 0.012;
-    vec3 q = d * 1.8 + vec3(t, -t*0.6, t*0.4);
-    float n1 = fbm(q);
-    float n2 = fbm(q * 2.3 + vec3(5.2, -1.7, 3.1));
-    float n3 = fbm(d * 8.0 - vec3(t*1.4));
+    // ── NEBULA: domain-warped filaments, dim and structured ───
+    float t = uTime * 0.010;
+    vec3 q = d * 1.6 + vec3(t, -t*0.55, t*0.40);
+    float n  = warpedFbm(q);
+    float n2 = warpedFbm(q * 2.7 + 8.3);
+    float mask = smoothstep(0.40, 0.92, n * 0.65 + n2 * 0.45);
 
-    // cloud mask — soft, mostly dark
-    float mask = smoothstep(0.45, 0.95, n1 * 0.7 + n2 * 0.45);
+    float pulse = 0.85 + 0.15 * sin(uTime * 0.22);
 
-    // pulsing nebula breathing
-    float pulse = 0.85 + 0.15 * sin(uTime * 0.25);
-
-    // palette: deep magenta → teal → amber tints
-    vec3 magenta = vec3(0.55, 0.10, 0.45);
-    vec3 teal    = vec3(0.05, 0.35, 0.55);
-    vec3 amber   = vec3(0.50, 0.25, 0.10);
-    vec3 cloudC  = mix(mix(magenta, teal, n2), amber, n3 * 0.55);
+    // three-tone palette (deep purple → teal → amber)
+    vec3 violet = vec3(0.32, 0.10, 0.50);
+    vec3 teal   = vec3(0.05, 0.30, 0.45);
+    vec3 amber  = vec3(0.45, 0.20, 0.08);
+    vec3 cloudC = mix(mix(violet, teal, n2), amber, n * 0.55);
     cloudC = hueShift(cloudC, uHue);
+    vec3 cloud  = cloudC * mask * 0.28 * uIntensity * mix(1.0, pulse, uPulse);
 
-    vec3 cloud = cloudC * mask * 0.32 * uIntensity * mix(1.0, pulse, uPulse);
+    // ── STARS: 3 layers (background field, mid, foreground giants) ─
+    vec3 starsBg  = starLayer(d, 380.0, 1.0 - 0.012 * uStars, 0.04, 0.13, 0.30);
+    vec3 starsMid = starLayer(d, 130.0, 1.0 - 0.006 * uStars, 0.05, 0.18, 0.45);
+    vec3 starsBig = starLayer(d,  35.0, 1.0 - 0.0025 * uStars, 0.07, 0.30, 0.55);
 
-    // procedural stars — high-frequency hash + twinkle
-    vec3 sP    = d * 240.0;
-    float sH   = hash(floor(sP));
-    float star = step(0.9975 - 0.0035 * uStars, sH);
-    float tw   = 0.55 + 0.45 * sin(uTime * 3.0 + sH * 67.0);
-    vec3 starC = mix(vec3(0.7,0.8,1.0), vec3(1.0,0.85,0.6), hash(floor(sP)*1.3));
-    vec3 starV = starC * star * tw * 0.95;
+    // ── BRIGHT HERO stars get an additional soft outer corona ──
+    vec3 corona = vec3(0.0);
+    {
+        vec3 p  = d * 18.0;
+        vec3 ip = floor(p);
+        float h = hash(ip);
+        if (h > 0.9988) {
+            vec3 sp = vec3(hash(ip+1.7), hash(ip+5.3), hash(ip+9.1));
+            float dist = length(fract(p) - sp);
+            float coronaR = 0.55;
+            float c = smoothstep(coronaR, 0.0, dist) * 0.65;
+            corona = starColor(hash(ip+3.3)) * c * (0.7 + 0.3 * sin(uTime * 1.2 + h * 31.0));
+        }
+    }
 
-    // brighter "named" stars + tiny galaxy specks
-    vec3 sP2   = d * 60.0;
-    float sH2  = hash(floor(sP2));
-    float big  = step(0.999, sH2);
-    float twb  = 0.6 + 0.4 * sin(uTime * 2.0 + sH2 * 31.0);
-    vec3 bigV  = vec3(1.0, 0.95, 0.8) * big * twb * 1.4;
+    vec3 col = cloud + starsBg + starsMid * 1.05 + starsBig * 1.2 + corona;
 
-    vec3 col = cloud + starV + bigV;
+    // subtle dust desaturation in front of bright clouds (haze)
+    col *= 1.0 - mask * 0.08;
+
     gl_FragColor = vec4(col, 1.0);
   }
 \`;
@@ -994,6 +1054,89 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(4800, 48, 32), skyMat);
 sky.renderOrder = -1;
 scene.add(sky);
 const stars = sky;   // alias for layer-toggle hook
+
+// ── DISTANT GALAXIES — procedural sprites on a parallax shell ───────────
+function makeGalaxyTex(seed) {
+    const sz = 192;
+    const c = document.createElement('canvas'); c.width = c.height = sz;
+    const ctx = c.getContext('2d');
+
+    // pick a galaxy style
+    const r = (s) => { const x = Math.sin(s) * 43758.5453; return x - Math.floor(x); };
+    const style = Math.floor(r(seed * 7.1) * 3); // 0 spiral, 1 elliptical, 2 irregular
+    // core colour roll
+    const tint = r(seed * 1.7);
+    const cr = tint < 0.33 ? [240,230,255] : tint < 0.66 ? [255,235,200] : [255,195,170];
+
+    ctx.save(); ctx.translate(sz/2, sz/2);
+    ctx.rotate(r(seed) * Math.PI * 2);
+    const ar = style === 0 ? 0.35 : (0.6 + r(seed*2) * 0.4);
+    ctx.scale(1.0, ar);
+
+    // outer haze
+    let g = ctx.createRadialGradient(0,0,0, 0,0,sz/2);
+    g.addColorStop(0,    'rgba(' + cr[0] + ',' + cr[1] + ',' + cr[2] + ',1)');
+    g.addColorStop(0.15, 'rgba(' + cr[0] + ',' + cr[1] + ',' + cr[2] + ',.6)');
+    g.addColorStop(0.4,  'rgba(' + cr[0] + ',' + cr[1] + ',' + cr[2] + ',.15)');
+    g.addColorStop(1,    'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0,0, sz/2, 0, Math.PI*2); ctx.fill();
+
+    // brighter core
+    g = ctx.createRadialGradient(0,0,0, 0,0,sz/6);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.4, 'rgba(' + cr[0] + ',' + cr[1] + ',' + cr[2] + ',.85)');
+    g.addColorStop(1, 'rgba(' + cr[0] + ',' + cr[1] + ',' + cr[2] + ',0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0,0, sz/6, 0, Math.PI*2); ctx.fill();
+
+    // spiral arms — faint ring noise
+    if (style === 0) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let i = 0; i < 4; i++) {
+            const off = r(seed * 17 + i) * Math.PI * 2;
+            const rad = sz * (0.20 + r(seed * 23 + i) * 0.15);
+            ctx.strokeStyle = 'rgba(' + cr[0] + ',' + cr[1] + ',' + cr[2] + ',.18)';
+            ctx.lineWidth = 2 + r(seed * 31 + i) * 4;
+            ctx.beginPath();
+            ctx.arc(0, 0, rad, off, off + Math.PI * (1.2 + r(seed*5+i) * 0.6));
+            ctx.stroke();
+        }
+    }
+    ctx.restore();
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+}
+
+const GALAXY_TEXES = [];
+const GALAXY_VARIANTS = 6;
+for (let i = 0; i < GALAXY_VARIANTS; i++) GALAXY_TEXES.push(makeGalaxyTex((i + 1) * 13.7));
+
+const galaxyGroup = new THREE.Group();
+scene.add(galaxyGroup);
+const GAL_COUNT = IS_MOBILE ? 35 : 90;
+for (let i = 0; i < GAL_COUNT; i++) {
+    const tex = GALAXY_TEXES[i % GALAXY_VARIANTS];
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.45 + Math.random() * 0.4,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false });
+    const spr = new THREE.Sprite(mat);
+    // position on a far sphere (closer than sky for parallax)
+    const phi = Math.random() * Math.PI * 2;
+    const the = Math.acos(2 * Math.random() - 1);
+    const R   = 2200 + Math.random() * 1400;
+    spr.position.set(
+        R * Math.sin(the) * Math.cos(phi),
+        R * Math.sin(the) * Math.sin(phi),
+        R * Math.cos(the)
+    );
+    const s = 35 + Math.random() * 110;
+    spr.scale.set(s, s * (0.5 + Math.random() * 0.6), 1);
+    spr.material.rotation = Math.random() * Math.PI * 2;
+    spr.renderOrder = -1;
+    galaxyGroup.add(spr);
+}
 
 // ── COLOURED NEBULA DUST per cortex (gives the galaxy look) ─────────────────
 const DUST_PER_LOBE = IS_MOBILE ? 200 : 600;
@@ -1586,16 +1729,16 @@ fFir.add({ chain: () => { for (let i = 0; i < 5; i++) setTimeout(() => fireStorm
 const fLay = gui.addFolder('Layers');
 fLay.add(params, 'showLabels').name('cortex labels').onChange(applyAll);
 fLay.add(params, 'showDust').name('cortex dust').onChange(v => { dustGroups.forEach(g => g.geo.visible = v); persist(); });
-fLay.add(params, 'showStars').name('star field').onChange(v => { stars.visible = v; persist(); });
+fLay.add(params, 'showStars').name('star field').onChange(v => { stars.visible = v; galaxyGroup.visible = v; persist(); });
 fLay.add(params, 'showAmbient').name('void dust').onChange(v => { ambient.visible = v; persist(); });
 
 // ── CORTEXES folder (per-bucket toggles) ─────────────────────
 const fCor = gui.addFolder('Cortex Filter');
-['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','CONTACTS','ARCHIVES','MISC'].forEach(cat => {
+['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','CONTACTS','ARCHIVES','MISC'].forEach(cat => {
     fCor.add(params, 'c' + cat).name(cat).onChange(applyAll);
 });
-fCor.add({ all:  () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','CONTACTS','ARCHIVES','MISC'].forEach(c => params['c'+c] = true); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'all').name('✓ show all');
-fCor.add({ none: () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','CONTACTS','ARCHIVES','MISC'].forEach(c => params['c'+c] = false); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'none').name('✗ hide all');
+fCor.add({ all:  () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','CONTACTS','ARCHIVES','MISC'].forEach(c => params['c'+c] = true); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'all').name('✓ show all');
+fCor.add({ none: () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','CONTACTS','ARCHIVES','MISC'].forEach(c => params['c'+c] = false); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'none').name('✗ hide all');
 
 // ── CAMERA folder ────────────────────────────────────────────
 const fCam = gui.addFolder('Camera');
