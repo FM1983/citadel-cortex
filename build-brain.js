@@ -641,10 +641,21 @@ canvas{display:block;width:100%!important;height:100%!important}
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.1/marked.min.js"></script>
 
 <script>
+// ── visible error trap — turns silent crashes into on-screen messages ──
+window.onerror = function(msg, src, line, col, err) {
+    const stack = (err && err.stack) ? err.stack.split('\\n').slice(0, 4).join('\\n') : '';
+    const html = '<div style="text-align:left;font-family:monospace;font-size:11px;color:#ff7a99;padding:20px;max-width:560px;line-height:1.5;background:rgba(20,5,15,.95);border:1px solid #ff7a99;border-radius:4px"><div style="font-size:13px;letter-spacing:3px;color:#ff7a99;margin-bottom:14px">◆ INIT ERROR</div><div style="color:#fff;margin-bottom:10px"><b>' + msg + '</b></div><div style="color:#aaa;margin-bottom:6px">at line ' + line + ':' + col + '</div><div style="color:#888;white-space:pre-wrap;font-size:10px">' + stack + '</div><div style="margin-top:16px;color:#7affc4;font-size:9px;letter-spacing:2px">Tell Claude what this says.</div></div>';
+    const l = document.getElementById('loading');
+    if (l) { l.innerHTML = html; l.style.opacity = '1'; l.style.transition = 'none'; }
+    return false;
+};
+console.log('[Cortex] init starting');
+
 const DATA = ${DATA};
 const N    = DATA.ids.length;
 const NL   = DATA.nLinks;
 const SEG  = DATA.segPerLink;
+console.log('[Cortex] DATA loaded:', N, 'neurons,', NL, 'links');
 
 const COLOR = {};
 for (const k of Object.keys(DATA.lobes)) COLOR[k] = new THREE.Color(DATA.lobes[k].color);
@@ -674,11 +685,13 @@ controls.autoRotateSpeed = 0.15;
 
 let composer, bloomPass;
 try {
+    if (typeof THREE.EffectComposer === 'undefined') throw new Error('EffectComposer not loaded');
     composer  = new THREE.EffectComposer(renderer);
     composer.addPass(new THREE.RenderPass(scene, camera));
     bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(W, H), IS_MOBILE ? 0.30 : 0.45, IS_MOBILE ? 0.6 : 0.85, IS_MOBILE ? 0.35 : 0.30);
     composer.addPass(bloomPass);
-} catch(e) { console.warn('Bloom:', e.message); composer = null; }
+    console.log('[Cortex] bloom OK');
+} catch(e) { console.warn('[Cortex] bloom failed:', e.message); composer = null; }
 
 // shared live uniforms — driven by control surface
 const timeU      = { value: 0.0 };
@@ -801,6 +814,7 @@ nodeGeo.setAttribute('aDimmed',  dimAttr);
 nodeGeo.setAttribute('aRecent',  new THREE.BufferAttribute(recent,1));
 const nodeCloud = new THREE.Points(nodeGeo, nodeMat);
 scene.add(nodeCloud);
+console.log('[Cortex] nodeCloud added,', N, 'neurons');
 
 // soft halo layer (heavily dimmed for nebula calm)
 const haloSizes = new Float32Array(N);
@@ -865,6 +879,7 @@ linkGeo.setAttribute('aLP',      new THREE.BufferAttribute(new Float32Array(DATA
 linkGeo.setAttribute('aSeed',    new THREE.BufferAttribute(new Float32Array(DATA.linkSeed),1));
 const linkSegs = new THREE.LineSegments(linkGeo, linkMat);
 scene.add(linkSegs);
+console.log('[Cortex] links added,', NL, 'synapses');
 
 // ════════════════════════════════════════════════════════════════════════════
 // 3D CORTEX LABELS — floating SpriteText above each lobe
@@ -1107,6 +1122,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(4800, 48, 32), skyMat);
 sky.renderOrder = -1;
 scene.add(sky);
 const stars = sky;   // alias for layer-toggle hook
+console.log('[Cortex] sky added');
 
 // ── DISTANT GALAXIES — procedural sprites on a parallax shell ───────────
 function makeGalaxyTex(seed) {
@@ -2122,14 +2138,25 @@ function animate() {
     if (composer) composer.render(); else renderer.render(scene, camera);
 }
 
+console.log('[Cortex] script reached end of init block — waiting for window.load');
 window.addEventListener('load', () => {
+    console.log('[Cortex] window.load fired');
     document.getElementById('loading').style.transition = 'opacity .8s';
     setTimeout(() => {
         document.getElementById('loading').style.opacity = '0';
         setTimeout(() => document.getElementById('loading').remove(), 800);
     }, 600);
-    animate();
-    // no auto-storm on load — calm by default; press F or button to ignite
+    try {
+        animate();
+        console.log('[Cortex] animate() called — render loop running');
+    } catch (e) {
+        console.error('[Cortex] animate failed:', e);
+        document.getElementById('loading').innerHTML =
+            '<div style="color:#ff7a99;font-family:monospace;font-size:11px;padding:20px;max-width:560px;text-align:left">' +
+            '<div style="font-size:13px;letter-spacing:3px;margin-bottom:12px">◆ RENDER LOOP FAILED</div>' +
+            '<div style="color:#fff">' + e.message + '</div>' +
+            '<div style="margin-top:12px;color:#888;font-size:10px;white-space:pre-wrap">' + (e.stack || '') + '</div></div>';
+    }
 });
 </script>
 </body>
