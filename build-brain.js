@@ -1934,8 +1934,12 @@ function preFilter(message) {
     const tokens = m.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length >= 4 && !STOP.has(t));
     const scored = pool.map(i => {
         const id = DATA.ids[i].toLowerCase();
+        const pth = (DATA.paths[i] || '').toLowerCase();
         let score = 0;
-        for (const t of tokens) if (id.includes(t)) score += 2;
+        for (const t of tokens) {
+            if (id.includes(t))  score += 2;      // title hit
+            if (pth.includes(t)) score += 1.6;    // folder / path hit
+        }
         score += DATA.adj[i].length * 0.04;     // degree bias
         score += Math.max(0, (60 - DATA.daysOld[i])) * 0.03;  // recency bias
         return [i, score];

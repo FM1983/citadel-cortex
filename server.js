@@ -104,11 +104,13 @@ const NAVIGATOR_TOOLS = [
     },
     {
         name: 'read_note',
-        description: "Read the full markdown content of one vault note. Use this when the user asks 'what does X say', when you need to summarise content, when comparing two matters, or when a candidate title alone is not enough to answer. Returns the note's text (first ~8 KB). Pass the integer idx from the candidate table.",
+        description: "Read the full markdown content of one vault note. Use this when the user asks 'what does X say', when you need to summarise content, when comparing two matters, or when a candidate title alone is not enough to answer. Returns the note's text (first ~8 KB). Pass EITHER idx (from the candidate table) OR path (from a search_vault result).",
         input_schema: {
             type: 'object',
-            properties: { idx: { type: 'integer', description: 'Node index from the candidate table' } },
-            required: ['idx'],
+            properties: {
+                idx:  { type: 'integer', description: 'Node index from the candidate table' },
+                path: { type: 'string',  description: 'Relative vault path (from search_vault results)' },
+            },
         },
     },
     {
@@ -181,6 +183,19 @@ const NAVIGATOR_TOOLS = [
         name: 'stella_location',
         description: "Ask Stella for Farhad's current phone location. Use when geographic context matters or user asks where they are.",
         input_schema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'search_vault',
+        description: "Keyword-search the FULL vault index (every categorized note, not just the candidate slice). Use when the user mentions a project, person, address, or term that isn't in your candidate table — e.g. 'Papanui', 'Camelot Motel', 'McLane', 'Lowther'. Searches title + folder path. Returns top matches with idx (usable with read_note / open_note), id, cortex, relPath, daysOld.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                query:  { type: 'string', description: 'Keywords to match against note title + folder path' },
+                cortex: { type: 'string', description: 'Optional cortex filter', enum: ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','LIGHTSPEED','OPERATIONS','ADMINISTRATION','TASTE','ARCHIVES','MISC','ALL'] },
+                limit:  { type: 'integer', description: 'Max results (default 12)' },
+            },
+            required: ['query'],
+        },
     },
     {
         name: 'list_recent',
@@ -393,8 +408,14 @@ async function executeNavigatorTool(name, input, candidateLookup, allCandidates)
     }
 
     if (name === 'read_note') {
-        const cand = candidateLookup[input.idx];
-        if (!cand) return { error: 'idx ' + input.idx + ' not in candidates' };
+        let cand = null;
+        // Prefer explicit path (e.g. from search_vault), then idx
+        if (input.path) {
+            cand = { id: input.path.split('/').pop().replace(/\.md$/,''), path: input.path };
+        } else if (typeof input.idx === 'number') {
+            cand = candidateLookup[input.idx];
+        }
+        if (!cand) return { error: 'pass idx (from candidate table) or path (from search_vault result)' };
         if (!cand.path) return { error: 'no file path for that node' };
         const full = safeVaultPath(cand.path);
         if (!full || !fs.existsSync(full)) return { error: 'file not found: ' + cand.path };
@@ -414,6 +435,9 @@ async function executeNavigatorTool(name, input, candidateLookup, allCandidates)
         if (!r) return { error: 'Stella not configured' };
         if (r.error) return { error: r.error, chunks: [] };
         return { ok: true, endpoint: r.endpoint, chunks: r.chunks };
+    }
+    if (name === 'search_vault') {
+        return searchVaultIndex(input.query, input.cortex, input.limit);
     }
     // UI tools — recorded for client to execute
     if (name === 'propose_tour' || name === 'open_note' || name === 'focus_cortex') {
@@ -661,6 +685,57 @@ function safeVaultPath(rel) {
     const resolved = path.resolve(VAULT, rel);
     if (!resolved.startsWith(VAULT)) return null;       // path-traversal guard
     return resolved;
+}
+
+// ── Vault index loader — caches vault-categorized.json with mtime check ─────
+// search_vault tool uses this to give Marius unconstrained keyword access to
+// the entire indexed vault (not just the 100-node candidate slice).
+const VAULT_INDEX_PATH = path.join(__dirname, 'vault-categorized.json');
+let _vaultIndex = null;
+let _vaultIndexMtime = 0;
+function loadVaultIndex() {
+    try {
+        const st = fs.statSync(VAULT_INDEX_PATH);
+        if (_vaultIndex && st.mtimeMs === _vaultIndexMtime) return _vaultIndex;
+        const j = JSON.parse(fs.readFileSync(VAULT_INDEX_PATH, 'utf8'));
+        // Synthesize stable idx per record (matches order shipped to client)
+        const records = (j.records || []).map((r, i) => ({ ...r, idx: i }));
+        _vaultIndex = records;
+        _vaultIndexMtime = st.mtimeMs;
+        return _vaultIndex;
+    } catch (e) {
+        return null;
+    }
+}
+
+function searchVaultIndex(query, cortex, limit) {
+    const idx = loadVaultIndex();
+    if (!idx) return { error: 'vault index not found at ' + VAULT_INDEX_PATH };
+    const q = String(query || '').toLowerCase().trim();
+    if (!q) return { error: 'empty query' };
+    const STOP = new Set(['the','a','an','of','and','to','for','from','with','this','that','what','show','find','about']);
+    const tokens = q.replace(/[^\w\s-]/g, ' ').split(/\s+/).filter(t => t.length >= 2 && !STOP.has(t));
+    if (!tokens.length) return { error: 'no usable query tokens' };
+    const cortexFilter = cortex && cortex !== 'ALL' ? cortex.toUpperCase() : null;
+    const now = Date.now();
+    const scored = [];
+    for (const r of idx) {
+        if (cortexFilter && r.category !== cortexFilter) continue;
+        const id  = (r.id || '').toLowerCase();
+        const pth = (r.relPath || '').toLowerCase();
+        let score = 0, hits = 0;
+        for (const t of tokens) {
+            if (id.includes(t))  { score += 2.4; hits++; }
+            if (pth.includes(t)) { score += 1.8; hits++; }
+        }
+        if (!hits) continue;
+        // small recency bias
+        const daysOld = r.mtime ? Math.floor((now - r.mtime) / 86400000) : null;
+        if (daysOld !== null) score += Math.max(0, (90 - daysOld)) * 0.01;
+        scored.push({ score, id: r.id, relPath: r.relPath, cortex: r.category, daysOld });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return { ok: true, query: q, total_matches: scored.length, results: scored.slice(0, limit || 12) };
 }
 
 http.createServer((req, res) => {
@@ -944,8 +1019,9 @@ http.createServer((req, res) => {
                 '',
                 'YOUR (LIBRARIAN) TOOLS:',
                 '  current_time              — date/time NZ (always call FIRST for any "today/recent/this week" query)',
-                '  read_note(idx)            — pull full markdown of a vault note before summarising it',
-                '  search_brain(query)       — FAST search of Stella\'s ALREADY-INDEXED content (vault, Misc-Working, Police-Stopsign, prior captures). Try this FIRST.',
+                '  read_note(idx | path)     — pull full markdown of a vault note. Pass idx from the candidate table, OR path from a search_vault result.',
+                '  search_vault(query)       — KEYWORD search of the FULL vault index (every note, by title + folder path). Use this whenever the user mentions a project, person, address, or keyword that is NOT in the candidate table below — e.g. "Papanui", "Camelot", "McLane", "Lowther". Returns {id, relPath, cortex} — call read_note(path: relPath) to drill in. DO NOT tell the user a topic isn\'t in the vault until search_vault has returned zero.',
+                '  search_brain(query)       — SEMANTIC search of Stella\'s vector index (Misc-Working, Police-Stopsign, captures). Different surface from search_vault — use this for fuzzy/concept queries.',
                 '  list_recent(days,cortex)  — fresh vault nodes sorted newest first',
                 '  list_hubs(cortex)         — most-connected vault nodes',
                 '  write_note(title,body,tags) — CAPTURE TO BRAIN — when user says "note that / log / remember / capture", OR proactively after you finish a Stella-fetched synthesis',
@@ -967,7 +1043,8 @@ http.createServer((req, res) => {
                 'Cortexes: PROJECTS, LITIGATION, PEOPLE, CONTACTS, DESIGN, RESEARCH, LIGHTSPEED, ADMINISTRATION, TASTE, ARCHIVES, MISC.',
                 '',
                 'Rules:',
-                ' • Tool indices MUST come from the candidate table; never invent.',
+                ' • Tool indices MUST come from the candidate table OR from a search_vault / search_brain result; never invent.',
+                ' • Before saying "I can\'t find X in the vault", you MUST call search_vault(X) first. The candidate table is only the top 100 pre-filtered for your current query — most of the vault is outside it.',
                 ' • Spoken voice — keep replies CONCISE (2-5 sentences). Voice is played back; long monologues are tiresome.',
                 ' • For LIVE questions (email, meetings, recent files, where am I) — call Stella tools, don\'t guess.',
                 ' • For KNOWN content questions — search_brain FIRST (it\'s indexed and fast). Only escalate to Stella tools if the brain comes up empty.',
@@ -1019,6 +1096,7 @@ http.createServer((req, res) => {
                                 b.name === 'current_time'       ? '⌚ now' :
                                 b.name === 'read_note'          ? '📖 ' + (result.id || '?').slice(0, 48) :
                                 b.name === 'search_brain'       ? '◉ ' + (result.chunks?.length || 0) + ' indexed' :
+                                b.name === 'search_vault'       ? '🔍 ' + (result.results?.length || 0) + '/' + (result.total_matches || 0) + ' vault hits' :
                                 b.name === 'list_recent'        ? '● ' + (result.count || 0) + ' recent' :
                                 b.name === 'list_hubs'          ? '▲ ' + (result.count || 0) + ' hubs' :
                                 b.name === 'stella_gmail'       ? '✉ Stella·Gmail ' + (result.count || 0) :
