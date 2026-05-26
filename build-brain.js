@@ -2179,8 +2179,7 @@ micBtn.addEventListener('pointerup',   () => { if (listening) setTimeout(stopLis
 // ── TTS ──────────────────────────────────────────────────────────────
 function stripForSpeech(s) {
     return String(s || '')
-        .replace(/```[\\s\\S]*?```/g, '. code block. ')
-        .replace(/`([^`]+)`/g, '$1')
+        .replace(/\\u0060[^\\u0060]*\\u0060/g, '')
         .replace(/\\*\\*([^*]+)\\*\\*/g, '$1')
         .replace(/\\*([^*]+)\\*/g, '$1')
         .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1')
