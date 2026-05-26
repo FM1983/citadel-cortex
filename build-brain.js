@@ -66,6 +66,7 @@ const LOBES = {
     ADMINISTRATION: { center: [ 130,  370,  -20 ], radius: 230, color: '#8ee0ff', hex: 0x8ee0ff },  // soft sky
     RESEARCH:       { center: [ 280,  -90,  180 ], radius: 170, color: '#5af0e8', hex: 0x5af0e8 },  // turquoise
     CONTACTS:       { center: [-420,   65,   60 ], radius: 130, color: '#ee9ce6', hex: 0xee9ce6 },  // soft pink
+    PEOPLE:         { center: [-300,  210,  120 ], radius: 160, color: '#ffb380', hex: 0xffb380 },  // warm peach
     TASTE:          { center: [-280, -200,  260 ], radius: 150, color: '#ff9ec7', hex: 0xff9ec7 },  // warm coral pink
     ARCHIVES:       { center: [   0, -310, -270 ], radius:  90, color: '#a8b0bd', hex: 0xa8b0bd },  // mist grey
     MISC:           { center: [   0, -380,  160 ], radius: 210, color: '#c9a8ff', hex: 0xc9a8ff },  // soft lavender
@@ -592,6 +593,7 @@ canvas{display:block;width:100%!important;height:100%!important}
     <div class="legend-row" data-cat="DESIGN"><span style="color:#ffd28a">●</span> DESIGN</div>
     <div class="legend-row" data-cat="ADMINISTRATION"><span style="color:#8ee0ff">●</span> ADMINISTRATION</div>
     <div class="legend-row" data-cat="RESEARCH"><span style="color:#5af0e8">●</span> RESEARCH</div>
+    <div class="legend-row" data-cat="PEOPLE"><span style="color:#ffb380">●</span> PEOPLE</div>
     <div class="legend-row" data-cat="CONTACTS"><span style="color:#ee9ce6">●</span> CONTACTS</div>
     <div class="legend-row" data-cat="TASTE"><span style="color:#ff9ec7">●</span> TASTE</div>
     <div class="legend-row" data-cat="ARCHIVES"><span style="color:#a8b0bd">●</span> ARCHIVES</div>
@@ -2277,11 +2279,11 @@ fLay.add(params, 'showAmbient').name('void dust').onChange(v => { ambient.visibl
 
 // ── CORTEXES folder (per-bucket toggles) ─────────────────────
 const fCor = gui.addFolder('Cortex Filter');
-['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(cat => {
+['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(cat => {
     fCor.add(params, 'c' + cat).name(cat).onChange(applyAll);
 });
-fCor.add({ all:  () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = true); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'all').name('✓ show all');
-fCor.add({ none: () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = false); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'none').name('✗ hide all');
+fCor.add({ all:  () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = true); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'all').name('✓ show all');
+fCor.add({ none: () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = false); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'none').name('✗ hide all');
 
 // ── CAMERA folder ────────────────────────────────────────────
 const fCam = gui.addFolder('Camera');

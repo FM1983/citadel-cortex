@@ -14,16 +14,20 @@ const { records } = JSON.parse(fs.readFileSync(IN, 'utf8'));
 console.log(`\n🧬 Categorizing ${records.length} records…`);
 
 // ─── Deterministic categorization ────────────────────────────────────────────
-const CATEGORIES = ['PROJECTS','LITIGATION','CONTACTS','DESIGN','RESEARCH','ADMINISTRATION','TASTE','ARCHIVES','MISC'];
+const CATEGORIES = ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','ADMINISTRATION','TASTE','ARCHIVES','MISC'];
 
 function categorize(rec) {
     const p = (rec.relPath || '').toLowerCase();
     const t = (rec.id || '').toLowerCase();
 
-    // CONTACTS — checked first so /people/ wins over /citadel-ai/.../people/
-    if (p.includes('/people/') || p.includes('/contacts/') ||
-        p.includes('contact register') || t.includes('contact register') ||
-        p.includes('master contact')) return 'CONTACTS';
+    // PEOPLE — individual person files (one-per-human biographical notes)
+    // Checked first so /people/ wins over generic admin/research routing
+    if (p.includes('/people/') || p.startsWith('people/')) return 'PEOPLE';
+
+    // CONTACTS — registers, address books, formal contact lists
+    if (p.includes('master contact') || p.includes('contact register') ||
+        t.includes('contact register') || t.includes('master contact') ||
+        p.includes('/contacts/') || p.startsWith('contacts/')) return 'CONTACTS';
 
     // TASTE — personal aesthetic: music, photos, places, likes, instagram saves
     if (p.startsWith('taste/')      || p.includes('/taste/')      ||
