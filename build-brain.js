@@ -1425,6 +1425,105 @@ function selectByIndex(idx) {
     flyTo(tgt.clone().add(dir), tgt);
 }
 
+// ── CORTEX OVERVIEW (clicking a lobe label or HUD legend row) ────────────
+function showCortexInfo(cat) {
+    const lobe = DATA.lobes[cat];
+    if (!lobe) return;
+
+    const all = [];
+    for (let i = 0; i < N; i++) if (DATA.cats[i] === cat) all.push(i);
+    if (!all.length) return;
+
+    // recently modified (newest first, top 14)
+    const recent = all.slice().sort((a, b) => DATA.daysOld[a] - DATA.daysOld[b]).slice(0, 14);
+    // top hubs by degree
+    const hubs   = all.slice().sort((a, b) => DATA.adj[b].length - DATA.adj[a].length).slice(0, 10);
+    // totals
+    const totalSyn = all.reduce((s, i) => s + DATA.adj[i].length, 0);
+    const freshCount = all.filter(i => DATA.daysOld[i] < 30).length;
+
+    // panel header
+    document.getElementById('sf').textContent = cat;
+    document.getElementById('np-title').textContent = '◇  ' + cat + '  CORTEX';
+    const catEl = document.getElementById('np-cat');
+    catEl.textContent = cat;
+    catEl.style.color = lobe.color;
+    const cR = parseInt(lobe.color.slice(1,3),16),
+          cG = parseInt(lobe.color.slice(3,5),16),
+          cB = parseInt(lobe.color.slice(5,7),16);
+    catEl.style.background = 'rgba(' + cR + ',' + cG + ',' + cB + ',.18)';
+    document.getElementById('np-stats').textContent =
+        all.length + ' neurons · ' + totalSyn + ' synapses · ' + freshCount + ' modified < 30d';
+
+    const np = document.getElementById('note-panel');
+    np.classList.add('open');
+    np.dataset.path = '';                   // disables Obsidian/Finder for the cortex view
+    np.dataset.cat  = cat;
+
+    const renderList = (items) => items.map(i =>
+        '<a href="#" data-idx="' + i + '">' +
+        DATA.ids[i].slice(0, 56) + (DATA.ids[i].length > 56 ? '…' : '') +
+        '<span style="color:rgba(140,200,230,.55);font-size:9px;float:right;margin-left:8px">' +
+            DATA.adj[i].length + ' · ' + humanAge(DATA.daysOld[i]) +
+        '</span></a>'
+    ).join('');
+
+    document.getElementById('np-content').innerHTML =
+        '<div style="background:rgba(' + cR + ',' + cG + ',' + cB + ',.06);border-left:3px solid ' + lobe.color +
+        ';padding:11px 14px;margin-bottom:18px;line-height:1.5;color:rgba(220,240,255,.88);font-size:11px">' +
+            'Cortex overview · click any neuron to inspect, or commence a guided tour through the most relevant content.' +
+        '</div>' +
+
+        '<div style="display:flex;gap:8px;margin-bottom:18px">' +
+            '<button class="np-ctx-btn" data-act="tour-recent" style="background:rgba(122,255,196,.14);border:1px solid rgba(122,255,196,.5);color:#7affc4">⌃  TOUR RECENT MATTERS</button>' +
+            '<button class="np-ctx-btn" data-act="tour-hubs"   style="background:rgba(140,200,230,.12);border:1px solid rgba(140,200,230,.5);color:#aaccdd">▲  TOUR HUBS</button>' +
+            '<button class="np-ctx-btn" data-act="isolate"      style="background:rgba(238,156,230,.12);border:1px solid rgba(238,156,230,.5);color:#ee9ce6">◐  ISOLATE</button>' +
+        '</div>' +
+
+        '<hr class="np-sep" style="margin-top:0"/>' +
+        '<div class="np-section-title">●  RECENTLY MODIFIED (' + freshCount + ' in last 30d)</div>' +
+        '<div class="np-link-list">' + renderList(recent) + '</div>' +
+
+        '<hr class="np-sep"/>' +
+        '<div class="np-section-title">▲  TOP HUBS</div>' +
+        '<div class="np-link-list">' + renderList(hubs) + '</div>';
+
+    // wire links
+    const root = document.getElementById('np-content');
+    root.querySelectorAll('a[data-idx]').forEach(a =>
+        a.addEventListener('click', e => { e.preventDefault(); selectByIndex(+a.getAttribute('data-idx')); }));
+
+    // wire buttons
+    root.querySelector('[data-act="tour-recent"]').addEventListener('click', () => {
+        openChat();
+        document.getElementById('chat-input').value = 'commence a tour through recent ' + cat.toLowerCase() + ' matters';
+        chatSubmit();
+    });
+    root.querySelector('[data-act="tour-hubs"]').addEventListener('click', () => {
+        openChat();
+        document.getElementById('chat-input').value = 'tour the most central / most-connected ' + cat.toLowerCase() + ' notes';
+        chatSubmit();
+    });
+    root.querySelector('[data-act="isolate"]').addEventListener('click', () => {
+        isolated = (isolated === cat) ? null : cat;
+        document.querySelectorAll('.legend-row').forEach(r =>
+            r.style.opacity = (!isolated || r.getAttribute('data-cat') === isolated) ? '1' : '.3');
+        applyIsolation();
+    });
+
+    // fly to the lobe centre
+    const tgt = new THREE.Vector3(lobe.center[0], lobe.center[1], lobe.center[2]);
+    const dir = camera.position.clone().sub(tgt).normalize().multiplyScalar(lobe.radius * 2.6);
+    flyTo(tgt.clone().add(dir), tgt);
+}
+
+// add inline-styled button class
+(function injectStyles() {
+    const css = '.np-ctx-btn{flex:1;font-family:Courier New,monospace;font-size:9.5px;letter-spacing:1.5px;padding:8px 6px;cursor:pointer;border-radius:2px;transition:all .15s;text-align:center}' +
+                '.np-ctx-btn:hover{filter:brightness(1.25)}';
+    const s = document.createElement('style'); s.textContent = css; document.head.appendChild(s);
+})();
+
 function clearSelection() {
     document.getElementById('note-panel').classList.remove('open');
     document.getElementById('sf').textContent = '—';
@@ -1527,9 +1626,7 @@ document.querySelectorAll('.legend-row').forEach(row => {
     row.style.pointerEvents = 'auto';
     row.addEventListener('click', () => {
         const cat = row.getAttribute('data-cat');
-        isolated = (isolated === cat) ? null : cat;
-        document.querySelectorAll('.legend-row').forEach(r => r.style.opacity = (!isolated || r.getAttribute('data-cat') === isolated) ? '1' : '.3');
-        applyIsolation();
+        showCortexInfo(cat);
     });
 });
 
@@ -1537,6 +1634,14 @@ renderer.domElement.addEventListener('click', e => {
     if (e.target !== renderer.domElement) return;
     mouse.x = (e.clientX/W)*2 - 1; mouse.y = -(e.clientY/H)*2 + 1;
     raycaster.setFromCamera(mouse, camera);
+
+    // labels first (sprites — usually larger screen footprint than node points)
+    const labelHits = raycaster.intersectObjects(labelGroup.children, false);
+    if (labelHits.length) {
+        const cat = labelHits[0].object.userData.lobeName;
+        if (cat) { showCortexInfo(cat); return; }
+    }
+
     const hits = raycaster.intersectObject(nodeCloud);
     if (hits.length) {
         selectByIndex(hits[0].index);
