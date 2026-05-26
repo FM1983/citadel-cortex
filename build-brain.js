@@ -786,6 +786,7 @@ const haloScaleU = { value: 1.0 };
 const linkBrightU= { value: 1.0 };
 const recencyU   = { value: 0.0 };       // 0 = off
 const recencyWinU= { value: 30.0 };      // days
+const audioU     = { value: 0.0 };       // 0..1 — TTS amplitude, drives global pulse
 
 function makeGlowTex(softness = 1.0, sz = 256) {
     // softness:  0.5 = sharp,  1.0 = soft (default),  1.5+ = wisp
@@ -843,9 +844,11 @@ const NODE_VERT = \`
   uniform   float uPulse;
   uniform   float uSizeScale;
   uniform   float uRecency;      // 0 = off, 1 = full effect
+  uniform   float uAudio;        // 0..1 — TTS amplitude
   varying   vec3  vColor;
   varying   float vAct;
   varying   float vDim;
+  varying   float vAudio;
   void main(){
     vec3 drift = vec3(
       sin(uTime * 0.14 + aPhase * 2.1),
@@ -854,12 +857,15 @@ const NODE_VERT = \`
     ) * uDrift;
     vec3 p = position + drift;
 
-    float pulse = 1.0 + uPulse * sin(uTime * 1.3 + aPhase) + aAct * 1.6;
+    // per-node phase modulation of audio so different neurons "answer" at different intensities
+    float audioPhased = uAudio * (0.55 + 0.45 * sin(aPhase * 3.7));
+    float pulse = 1.0 + uPulse * sin(uTime * 1.3 + aPhase) + aAct * 1.6 + audioPhased * 0.55;
     float recent = mix(1.0, 0.85 + aRecent * 0.9, uRecency);
 
-    vColor = aColor + vec3(1.0,1.0,1.0) * aAct * 0.7;
+    vColor = aColor + vec3(1.0,1.0,1.0) * (aAct * 0.7 + audioPhased * 0.4);
     vAct   = aAct;
     vDim   = aDimmed;
+    vAudio = audioPhased;
 
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
     gl_PointSize = aSize * pulse * uSizeScale * recent * aDimmed * (380.0 / -mv.z);
@@ -871,16 +877,17 @@ const NODE_FRAG = \`
   varying vec3  vColor;
   varying float vAct;
   varying float vDim;
+  varying float vAudio;
   void main(){
     vec4 t = texture2D(uTex, gl_PointCoord);
     if(t.a < 0.01) discard;
-    vec3 c = vColor * (0.9 + t.r * 0.7) * (1.0 + vAct * 1.6);
+    vec3 c = vColor * (0.9 + t.r * 0.7) * (1.0 + vAct * 1.6 + vAudio * 0.8);
     gl_FragColor = vec4(c * vDim, t.a * mix(0.15, 1.0, vDim));
   }
 \`;
 
 const nodeMat = new THREE.ShaderMaterial({
-    uniforms:       { uTime: timeU, uTex: { value: makeGlowTex(1.1) }, uDrift: driftU, uPulse: pulseU, uSizeScale: sizeScaleU, uRecency: recencyU },
+    uniforms:       { uTime: timeU, uTex: { value: makeGlowTex(1.1) }, uDrift: driftU, uPulse: pulseU, uSizeScale: sizeScaleU, uRecency: recencyU, uAudio: audioU },
     vertexShader:   NODE_VERT, fragmentShader: NODE_FRAG,
     transparent:    true, blending: THREE.AdditiveBlending, depthWrite: false,
 });
@@ -906,7 +913,7 @@ for (let i=0;i<N;i++) haloSizes[i] = sizes[i] * 2.4;
 const haloCols = new Float32Array(N*3);
 for (let i=0;i<N*3;i++) haloCols[i] = cols[i] * 0.18;
 const haloMat = new THREE.ShaderMaterial({
-    uniforms:       { uTime: timeU, uTex: { value: makeGlowTex(1.7, 512) }, uDrift: driftU, uPulse: pulseU, uSizeScale: haloScaleU, uRecency: recencyU },
+    uniforms:       { uTime: timeU, uTex: { value: makeGlowTex(1.7, 512) }, uDrift: driftU, uPulse: pulseU, uSizeScale: haloScaleU, uRecency: recencyU, uAudio: audioU },
     vertexShader:   NODE_VERT, fragmentShader: NODE_FRAG,
     transparent:    true, blending: THREE.AdditiveBlending, depthWrite: false,
 });
@@ -937,26 +944,26 @@ const LINK_VERT = \`
 const LINK_FRAG = \`
   uniform float uTime;
   uniform float uLinkBright;
+  uniform float uAudio;
   varying float vLP;
   varying float vSeed;
   void main(){
-    // slow organic breathing — no sharp flow, no crackle
-    // gentle bell-shaped pulse drifting along the axon
     float flow  = fract(vLP * 0.5 - uTime * 0.06 + vSeed * 3.0);
-    float bell  = exp(-pow((flow - 0.5) * 4.0, 2.0));   // soft gaussian
+    float bell  = exp(-pow((flow - 0.5) * 4.0, 2.0));
     float breath = 0.55 + 0.45 * sin(uTime * 0.5 + vSeed * 6.0);
     float base   = 0.04;
-    // muted teal-cyan, no white spikes
     vec3  cold   = vec3(0.18, 0.55, 0.70);
     vec3  warm   = vec3(0.55, 0.85, 0.95);
-    vec3  col    = mix(cold, warm, bell * 0.6 + breath * 0.2);
-    float alpha  = (base + bell * 0.20) * (0.7 + 0.3 * breath) * uLinkBright;
-    gl_FragColor = vec4(col, alpha);
+    vec3  col    = mix(cold, warm, bell * 0.6 + breath * 0.2 + uAudio * 0.35);
+    // audio brightens links and adds a synced bell pulse
+    float audioBoost = 1.0 + uAudio * 1.2;
+    float alpha  = (base + bell * 0.20 + uAudio * 0.15) * (0.7 + 0.3 * breath) * uLinkBright * audioBoost;
+    gl_FragColor = vec4(col * audioBoost, alpha);
   }
 \`;
 
 const linkMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: timeU, uLinkBright: linkBrightU },
+    uniforms: { uTime: timeU, uLinkBright: linkBrightU, uAudio: audioU },
     vertexShader: LINK_VERT, fragmentShader: LINK_FRAG,
     transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
 });
@@ -2253,6 +2260,28 @@ function stripForSpeech(s) {
         .trim();
 }
 
+// ── audio-reactive plumbing ────────────────────────────────────────
+let ttsAudioCtx = null;
+let ttsAnalyser = null;
+let ttsAnalyserData = null;
+function attachTTSAnalyser(audioEl) {
+    try {
+        if (!ttsAudioCtx) ttsAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // resume if suspended (autoplay policies on iOS)
+        if (ttsAudioCtx.state === 'suspended') ttsAudioCtx.resume().catch(()=>{});
+        // Each audio element can only have ONE source node — tagged so we don't re-wire
+        if (audioEl._cortexWired) return;
+        const src = ttsAudioCtx.createMediaElementSource(audioEl);
+        ttsAnalyser = ttsAudioCtx.createAnalyser();
+        ttsAnalyser.fftSize = 256;
+        ttsAnalyser.smoothingTimeConstant = 0.6;
+        ttsAnalyserData = new Uint8Array(ttsAnalyser.fftSize);
+        src.connect(ttsAnalyser);
+        ttsAnalyser.connect(ttsAudioCtx.destination);
+        audioEl._cortexWired = true;
+    } catch (e) { console.warn('audio analyser:', e.message); }
+}
+
 async function speakEleven(text) {
     try {
         const r = await fetch('/api/speak', {
@@ -2264,6 +2293,7 @@ async function speakEleven(text) {
         const blob = await r.blob();
         if (elevenAudio) { elevenAudio.pause(); }
         elevenAudio = new Audio(URL.createObjectURL(blob));
+        attachTTSAnalyser(elevenAudio);
         elevenAudio.play().catch(() => {});
         return true;
     } catch (e) { return false; }
@@ -2907,6 +2937,23 @@ applyAll();
 // ════════════════════════════════════════════════════════════════════════════
 const clock = new THREE.Clock();
 let prevT = 0;
+function sampleTTSAudio() {
+    if (!ttsAnalyser || !elevenAudio || elevenAudio.paused) {
+        audioU.value *= 0.86;          // decay when not speaking
+        return;
+    }
+    ttsAnalyser.getByteTimeDomainData(ttsAnalyserData);
+    let sum = 0;
+    for (let i = 0; i < ttsAnalyserData.length; i++) {
+        const v = (ttsAnalyserData[i] - 128) / 128;
+        sum += v * v;
+    }
+    const rms = Math.sqrt(sum / ttsAnalyserData.length);
+    // smooth and amplify: typical speech RMS is 0.05-0.20, want target 0.1-0.8
+    const target = Math.min(rms * 4.5, 1.0);
+    audioU.value = audioU.value * 0.55 + target * 0.45;
+}
+
 function animate() {
     requestAnimationFrame(animate);
     const t  = clock.getElapsedTime();
@@ -2916,6 +2963,9 @@ function animate() {
     updateFirings(t, dt);
     updateArcs(dt);
     updateAmbient();
+    sampleTTSAudio();
+    // brief bloom boost on loud syllables
+    if (bloomPass) bloomPass.strength = params.bloomStrength * (1 + audioU.value * 0.45);
     updateFPS();
     if (composer) composer.render(); else renderer.render(scene, camera);
 }
