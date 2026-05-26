@@ -57,7 +57,7 @@ let processed = 0;
 const reportEvery = Math.max(100, Math.floor(files.length / 20));
 
 for (const fp of files) {
-    let content=''; try { content = fs.readFileSync(fp,'utf8'); } catch { continue; }
+    let content='', stat; try { content = fs.readFileSync(fp,'utf8'); stat = fs.statSync(fp); } catch { continue; }
     const rel   = path.relative(VAULT, fp);
     const title = extractTitle(content, fp);
     const fm    = parseFm(content);
@@ -68,7 +68,11 @@ for (const fp of files) {
         rel.replace(/\.md$/,'').split(path.sep).pop(),
     ];
     if (fm.aliases) fm.aliases.replace(/[\[\]"']/g,'').split(',').forEach(a=>aliases.push(a.trim()));
-    records.push({ id: title, group, wordCount: words, links: extractLinks(content), aliases, relPath: rel });
+    records.push({
+        id: title, group, wordCount: words,
+        mtime: stat ? stat.mtimeMs : 0,
+        links: extractLinks(content), aliases, relPath: rel,
+    });
     processed++;
     if (processed % reportEvery === 0) console.log(`   ${processed}/${files.length} (${Math.round(processed/files.length*100)}%)`);
 }

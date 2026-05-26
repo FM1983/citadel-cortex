@@ -21,7 +21,10 @@ const reg = (a, id) => { if (!a) return; const k = a.toLowerCase().trim(); if (!
 
 for (const r of records) {
     if (!nodes.has(r.id)) {
-        nodes.set(r.id, { id: r.id, group: r.group, category: r.category, wordCount: r.wordCount, _links: r.links, relPath: r.relPath });
+        nodes.set(r.id, {
+            id: r.id, group: r.group, category: r.category, wordCount: r.wordCount,
+            mtime: r.mtime || 0, _links: r.links, relPath: r.relPath,
+        });
         reg(r.id, r.id);
         for (const a of (r.aliases || [])) reg(a, r.id);
     }
@@ -214,13 +217,33 @@ const links = [...linkSet].map(k => { const [s,t]=k.split('\x00'); return { sour
 console.log(`\n✓ Brain ready: ${nodes.size} neurons · ${links.length} synapses\n`);
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 7. ADJACENCY (for in-browser firing simulation)
+// 7. ADJACENCY + DIRECTED BACKLINKS (only from real wiki-links)
 // ═══════════════════════════════════════════════════════════════════════════════
 const nodeIndex = new Map(); nodeArr.forEach((n,i) => nodeIndex.set(n.id, i));
 const adjacency = nodeArr.map(() => []);
 for (const lk of links) {
     const s = nodeIndex.get(lk.source), t = nodeIndex.get(lk.target);
     if (s !== undefined && t !== undefined) { adjacency[s].push(t); adjacency[t].push(s); }
+}
+
+// Directed backlinks: who explicitly wrote [[me]] in their note (semantic only)
+const wikiOut = nodeArr.map(() => []);    // out-edges (this node links to ...)
+const wikiIn  = nodeArr.map(() => []);    // in-edges  (... links to this node)
+for (const r of records) {
+    const srcIdx = nodeIndex.get(r.id);
+    if (srcIdx === undefined) continue;
+    for (const raw of (r.links || [])) {
+        const stem = raw.split('/').pop().replace(/\.md$/i, '');
+        let tgt = null;
+        for (const t of [raw, stem, raw.toLowerCase(), stem.toLowerCase()]) {
+            if (aliasMap.has(t.trim().toLowerCase())) { tgt = aliasMap.get(t.trim().toLowerCase()); break; }
+        }
+        if (!tgt || tgt === r.id) continue;
+        const tgtIdx = nodeIndex.get(tgt);
+        if (tgtIdx === undefined) continue;
+        if (!wikiOut[srcIdx].includes(tgtIdx)) wikiOut[srcIdx].push(tgtIdx);
+        if (!wikiIn[tgtIdx].includes(srcIdx))  wikiIn[tgtIdx].push(srcIdx);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -283,17 +306,21 @@ topHubs.forEach((h,i)=>console.log(`   ${i+1}. ${h.id} (${h.deg} synapses · ${h
 // ═══════════════════════════════════════════════════════════════════════════════
 // 9. PACK DATA
 // ═══════════════════════════════════════════════════════════════════════════════
+const NOW_MS = Date.now();
 const packed = {
     ids:        nodeArr.map(n => n.id),
-    paths:      nodeArr.map(n => n.relPath || ''),       // for /api/note + Obsidian deep-link
+    paths:      nodeArr.map(n => n.relPath || ''),
     cats:       nodeArr.map(n => n.category),
     groups:     nodeArr.map(n => n.group),
     sizes:      nodeArr.map(n => n.size),
     words:      nodeArr.map(n => n.wordCount || 0),
+    // days-ago (rounded) — cheap & compact
+    daysOld:    nodeArr.map(n => n.mtime ? Math.round((NOW_MS - n.mtime) / 86400000) : 9999),
     xs:         nodeArr.map(n => n.x),
     ys:         nodeArr.map(n => n.y),
     zs:         nodeArr.map(n => n.z),
     adj:        adjacency,
+    wikiOut, wikiIn,
     categories: CATEGORIES,
     lobes:      LOBES,
     linkPos:    Array.from(linkPosArr),
@@ -301,6 +328,7 @@ const packed = {
     linkSeed:   Array.from(linkSeedArr),
     nLinks:     links.length,
     segPerLink: SEG,
+    generated:  NOW_MS,
 };
 const DATA = JSON.stringify(packed);
 
@@ -376,6 +404,11 @@ canvas{display:block;width:100%!important;height:100%!important}
 #np-content::-webkit-scrollbar{width:6px}
 #np-content::-webkit-scrollbar-track{background:rgba(0,0,0,.2)}
 #np-content::-webkit-scrollbar-thumb{background:rgba(140,200,230,.3);border-radius:3px}
+#np-content .np-sep{border:none;border-top:1px solid rgba(140,200,230,.12);margin:22px 0 12px}
+#np-content .np-section-title{font-size:9px;letter-spacing:2.5px;color:#7affc4;margin-bottom:8px;font-weight:bold}
+#np-content .np-link-list{font-size:10.5px;line-height:1.85;color:rgba(180,220,250,.85);word-break:break-word}
+#np-content .np-link-list a{color:#8ee0ff;border-bottom:none;padding:2px 4px;border-radius:2px;transition:background .12s}
+#np-content .np-link-list a:hover{background:rgba(140,200,230,.15);color:#fff}
 
 /* ── SEARCH DROPDOWN ──────────────────────────────────────── */
 #search-results{position:fixed;top:50px;left:50%;transform:translateX(-50%);width:290px;
@@ -387,7 +420,45 @@ canvas{display:block;width:100%!important;height:100%!important}
 #search-results .sr-item:hover,#search-results .sr-item.active{background:rgba(140,200,230,.15)}
 #search-results .sr-cat{font-size:8px;letter-spacing:1.5px;opacity:.75;flex-shrink:0}
 
+/* ── DASHBOARD ─────────────────────────────────────────────── */
+#dash{position:fixed;top:0;left:50%;transform:translateX(-50%) translateY(-110%);width:min(880px,94vw);max-height:84vh;
+  background:rgba(5,10,20,.94);border:1px solid rgba(140,200,230,.22);border-top:none;backdrop-filter:blur(14px);
+  z-index:70;display:flex;flex-direction:column;transition:transform .3s cubic-bezier(.2,.7,.2,1);border-radius:0 0 4px 4px;
+  font-family:'Courier New',monospace;color:#cdf;pointer-events:auto}
+#dash.open{transform:translateX(-50%) translateY(0)}
+#dash header{padding:14px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(140,200,230,.14)}
+#dash header .dt{font-size:13px;letter-spacing:5px;color:#7affc4;font-weight:bold;text-shadow:0 0 12px rgba(122,255,196,.4)}
+#dash header .dc{cursor:pointer;color:#ee9ce6;font-size:18px;background:none;border:none;padding:6px 10px}
+#dash header .dc:hover{color:#fff;text-shadow:0 0 8px #ee9ce6}
+#dash .dgrid{padding:18px 24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px 20px;overflow-y:auto}
+#dash section h3{font-size:9px;letter-spacing:3px;color:#8ee0ff;margin-bottom:8px;text-transform:uppercase}
+#dash section ol{list-style:none;padding:0;font-size:11px}
+#dash section li{padding:5px 8px;border-bottom:1px solid rgba(140,200,230,.06);cursor:pointer;display:flex;justify-content:space-between;gap:8px;line-height:1.45;border-radius:2px}
+#dash section li:hover{background:rgba(140,200,230,.12)}
+#dash .dn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#dash .dx{font-size:9px;color:#7affc4;flex-shrink:0;opacity:.85;letter-spacing:1px}
+
 #fire-btn{position:fixed;bottom:80px;right:18px;background:rgba(238,156,230,.15);border:1px solid rgba(238,156,230,.6);color:#ee9ce6;font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;z-index:30;pointer-events:auto;text-shadow:0 0 8px rgba(238,156,230,.7);transition:all .15s;border-radius:2px}
+#dash-btn{position:fixed;bottom:80px;right:155px;background:rgba(122,255,196,.13);border:1px solid rgba(122,255,196,.5);color:#7affc4;font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;z-index:30;pointer-events:auto;text-shadow:0 0 8px rgba(122,255,196,.6);transition:all .15s;border-radius:2px}
+#dash-btn:hover{background:rgba(122,255,196,.28);box-shadow:0 0 20px rgba(122,255,196,.35)}
+
+/* ── MOBILE / NARROW ─────────────────────────────────────── */
+@media (max-width: 720px) {
+    #tr{display:none}
+    #tl{font-size:9px;padding:8px 11px;min-width:0;width:auto}
+    .pt{font-size:8px;letter-spacing:3px}
+    #bl{display:none}
+    #note-panel{width:100vw;max-width:100vw;border-right:none}
+    #si{width:75vw;font-size:12px;padding:9px 14px}
+    #search-results{width:75vw}
+    #fire-btn,#gui-toggle,#dash-btn{font-size:9px;padding:7px 11px;letter-spacing:2px}
+    #fire-btn{bottom:18px;right:18px}
+    #gui-toggle{top:auto;bottom:18px;right:auto;left:18px}
+    #dash-btn{bottom:18px;right:140px}
+    .lil-gui.root{width:88vw;max-width:88vw;top:auto;bottom:64px;right:6vw}
+    #dash{width:96vw;max-height:78vh}
+    #dash .dgrid{grid-template-columns:1fr;padding:14px 16px;gap:14px}
+}
 #fire-btn:hover{background:rgba(238,156,230,.3);box-shadow:0 0 20px rgba(238,156,230,.4)}
 
 /* ── lil-gui themed ────────────────────────────────────────── */
@@ -452,6 +523,15 @@ canvas{display:block;width:100%!important;height:100%!important}
 
 <div id="search-results"></div>
 
+<div id="dash">
+  <header>
+    <div class="dt">◆ DASHBOARD</div>
+    <button class="dc" id="dash-close">✕</button>
+  </header>
+  <div class="dgrid" id="dash-grid"></div>
+</div>
+
+<button id="dash-btn">▤ DASHBOARD</button>
 <button id="fire-btn">⚡ FIRE STORM</button>
 <button id="gui-toggle">⚙ CONTROLS</button>
 
@@ -480,8 +560,10 @@ for (const k of Object.keys(DATA.lobes)) COLOR[k] = new THREE.Color(DATA.lobes[k
 // SCENE / RENDERER / BLOOM
 // ════════════════════════════════════════════════════════════════════════════
 const W = window.innerWidth, H = window.innerHeight;
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const IS_MOBILE = matchMedia('(max-width: 720px), (pointer: coarse)').matches;
+
+const renderer = new THREE.WebGLRenderer({ antialias: !IS_MOBILE });
+renderer.setPixelRatio(IS_MOBILE ? 1 : Math.min(devicePixelRatio, 2));
 renderer.setSize(W, H);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;   // softer roll-off
 renderer.toneMappingExposure = 0.62;
@@ -501,7 +583,7 @@ let composer, bloomPass;
 try {
     composer  = new THREE.EffectComposer(renderer);
     composer.addPass(new THREE.RenderPass(scene, camera));
-    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(W, H), 0.45, 0.85, 0.30);
+    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(W, H), IS_MOBILE ? 0.30 : 0.45, IS_MOBILE ? 0.6 : 0.85, IS_MOBILE ? 0.35 : 0.30);
     composer.addPass(bloomPass);
 } catch(e) { console.warn('Bloom:', e.message); composer = null; }
 
@@ -512,6 +594,8 @@ const pulseU     = { value: 0.10 };
 const sizeScaleU = { value: 1.0 };
 const haloScaleU = { value: 1.0 };
 const linkBrightU= { value: 1.0 };
+const recencyU   = { value: 0.0 };       // 0 = off
+const recencyWinU= { value: 30.0 };      // days
 
 function makeGlowTex(softness = 1.0, sz = 256) {
     // softness:  0.5 = sharp,  1.0 = soft (default),  1.5+ = wisp
@@ -537,7 +621,12 @@ const cols   = new Float32Array(N * 3);
 const sizes  = new Float32Array(N);
 const phases = new Float32Array(N);
 const act    = new Float32Array(N);
+const dimmed = new Float32Array(N);
+const recent = new Float32Array(N);
 const baseSizes = new Float32Array(N);
+
+let MAX_DAYS = 60;
+for (let i = 0; i < N; i++) if (DATA.daysOld[i] < 9000) MAX_DAYS = Math.max(MAX_DAYS, DATA.daysOld[i]);
 
 for (let i = 0; i < N; i++) {
     pos[i*3]   = DATA.xs[i];
@@ -548,6 +637,8 @@ for (let i = 0; i < N; i++) {
     baseSizes[i] = DATA.sizes[i] * 1.85;
     sizes[i]     = baseSizes[i];
     phases[i]    = Math.random() * Math.PI * 2;
+    dimmed[i]    = 1.0;
+    recent[i]    = DATA.daysOld[i] >= 9000 ? 0 : Math.max(0, 1 - DATA.daysOld[i] / MAX_DAYS);
 }
 
 const NODE_VERT = \`
@@ -555,14 +646,17 @@ const NODE_VERT = \`
   attribute vec3  aColor;
   attribute float aPhase;
   attribute float aAct;
+  attribute float aDimmed;       // 1.0 = in current focus / 0.05 = dimmed
+  attribute float aRecent;       // 0..1 — newer = closer to 1
   uniform   float uTime;
   uniform   float uDrift;
   uniform   float uPulse;
   uniform   float uSizeScale;
+  uniform   float uRecency;      // 0 = off, 1 = full effect
   varying   vec3  vColor;
   varying   float vAct;
+  varying   float vDim;
   void main(){
-    // 4D dance — every neuron drifts on its own slow orbit, never fully still
     vec3 drift = vec3(
       sin(uTime * 0.14 + aPhase * 2.1),
       cos(uTime * 0.11 + aPhase * 1.7),
@@ -571,10 +665,14 @@ const NODE_VERT = \`
     vec3 p = position + drift;
 
     float pulse = 1.0 + uPulse * sin(uTime * 1.3 + aPhase) + aAct * 1.6;
+    float recent = mix(1.0, 0.85 + aRecent * 0.9, uRecency);
+
     vColor = aColor + vec3(1.0,1.0,1.0) * aAct * 0.7;
     vAct   = aAct;
+    vDim   = aDimmed;
+
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
-    gl_PointSize = aSize * pulse * uSizeScale * (380.0 / -mv.z);
+    gl_PointSize = aSize * pulse * uSizeScale * recent * aDimmed * (380.0 / -mv.z);
     gl_Position  = projectionMatrix * mv;
   }
 \`;
@@ -582,16 +680,17 @@ const NODE_FRAG = \`
   uniform sampler2D uTex;
   varying vec3  vColor;
   varying float vAct;
+  varying float vDim;
   void main(){
     vec4 t = texture2D(uTex, gl_PointCoord);
     if(t.a < 0.01) discard;
     vec3 c = vColor * (0.9 + t.r * 0.7) * (1.0 + vAct * 1.6);
-    gl_FragColor = vec4(c, t.a);
+    gl_FragColor = vec4(c * vDim, t.a * mix(0.15, 1.0, vDim));
   }
 \`;
 
 const nodeMat = new THREE.ShaderMaterial({
-    uniforms:       { uTime: timeU, uTex: { value: makeGlowTex(1.1) }, uDrift: driftU, uPulse: pulseU, uSizeScale: sizeScaleU },
+    uniforms:       { uTime: timeU, uTex: { value: makeGlowTex(1.1) }, uDrift: driftU, uPulse: pulseU, uSizeScale: sizeScaleU, uRecency: recencyU },
     vertexShader:   NODE_VERT, fragmentShader: NODE_FRAG,
     transparent:    true, blending: THREE.AdditiveBlending, depthWrite: false,
 });
@@ -604,6 +703,9 @@ nodeGeo.setAttribute('aSize',    sizeAttr);
 nodeGeo.setAttribute('aPhase',   new THREE.BufferAttribute(phases,1));
 const actAttr = new THREE.BufferAttribute(act,1); actAttr.setUsage(THREE.DynamicDrawUsage);
 nodeGeo.setAttribute('aAct',     actAttr);
+const dimAttr = new THREE.BufferAttribute(dimmed,1); dimAttr.setUsage(THREE.DynamicDrawUsage);
+nodeGeo.setAttribute('aDimmed',  dimAttr);
+nodeGeo.setAttribute('aRecent',  new THREE.BufferAttribute(recent,1));
 const nodeCloud = new THREE.Points(nodeGeo, nodeMat);
 scene.add(nodeCloud);
 
@@ -613,7 +715,7 @@ for (let i=0;i<N;i++) haloSizes[i] = sizes[i] * 2.4;
 const haloCols = new Float32Array(N*3);
 for (let i=0;i<N*3;i++) haloCols[i] = cols[i] * 0.18;
 const haloMat = new THREE.ShaderMaterial({
-    uniforms:       { uTime: timeU, uTex: { value: makeGlowTex(1.7, 512) }, uDrift: driftU, uPulse: pulseU, uSizeScale: haloScaleU },
+    uniforms:       { uTime: timeU, uTex: { value: makeGlowTex(1.7, 512) }, uDrift: driftU, uPulse: pulseU, uSizeScale: haloScaleU, uRecency: recencyU },
     vertexShader:   NODE_VERT, fragmentShader: NODE_FRAG,
     transparent:    true, blending: THREE.AdditiveBlending, depthWrite: false,
 });
@@ -623,6 +725,8 @@ haloGeo.setAttribute('aColor',   new THREE.BufferAttribute(haloCols,3));
 haloGeo.setAttribute('aSize',    new THREE.BufferAttribute(haloSizes,1));
 haloGeo.setAttribute('aPhase',   new THREE.BufferAttribute(phases.map(p=>p+1.7),1));
 haloGeo.setAttribute('aAct',     actAttr);
+haloGeo.setAttribute('aDimmed',  dimAttr);
+haloGeo.setAttribute('aRecent',  new THREE.BufferAttribute(recent,1));
 scene.add(new THREE.Points(haloGeo, haloMat));
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -892,7 +996,7 @@ scene.add(sky);
 const stars = sky;   // alias for layer-toggle hook
 
 // ── COLOURED NEBULA DUST per cortex (gives the galaxy look) ─────────────────
-const DUST_PER_LOBE = 600;
+const DUST_PER_LOBE = IS_MOBILE ? 200 : 600;
 const dustGroups = [];
 for (const [name, lobe] of Object.entries(DATA.lobes)) {
     const dp = new Float32Array(DUST_PER_LOBE * 3);
@@ -922,7 +1026,7 @@ for (const [name, lobe] of Object.entries(DATA.lobes)) {
     dustGroups.push({ geo: dg, pos: dp, vel: dv });
 }
 // generic ambient void dust
-const AP = 1800, avel = new Float32Array(AP*3);
+const AP = IS_MOBILE ? 500 : 1800, avel = new Float32Array(AP*3);
 const ambPos = new Float32Array(AP*3);
 for (let i = 0; i < AP; i++) {
     ambPos[i*3]   = (Math.random()-.5)*1500;
@@ -973,23 +1077,53 @@ fetch('/api/manifest').then(r => r.json()).then(m => manifest = m).catch(()=>{})
 const npLobeColors = {};   // for category accent on panel
 for (const k of Object.keys(DATA.lobes)) npLobeColors[k] = DATA.lobes[k].color;
 
+// ── 2-hop neighbourhood highlight ─────────────────────────────────────
+function applyNeighbourhood(idx) {
+    if (idx == null) {
+        for (let i = 0; i < N; i++) dimmed[i] = 1.0;
+    } else {
+        for (let i = 0; i < N; i++) dimmed[i] = 0.12;
+        dimmed[idx] = 1.0;
+        const oneHop = DATA.adj[idx] || [];
+        for (const a of oneHop) {
+            dimmed[a] = 1.0;
+            for (const b of (DATA.adj[a] || [])) if (b !== idx) dimmed[b] = Math.max(dimmed[b], 0.55);
+        }
+    }
+    dimAttr.needsUpdate = true;
+}
+
+function humanAge(days) {
+    if (days >= 9000) return 'unknown';
+    if (days < 1)    return 'today';
+    if (days < 2)    return 'yesterday';
+    if (days < 30)   return days + 'd ago';
+    if (days < 365)  return Math.round(days / 30) + 'mo ago';
+    return Math.round(days / 365) + 'y ago';
+}
+
 async function showNodeInfo(idx) {
     const id = DATA.ids[idx];
     const relPath = DATA.paths[idx];
     const cat = DATA.cats[idx];
 
     document.getElementById('sf').textContent = id.slice(0,18) + (id.length>18?'…':'');
-
-    document.getElementById('nit') && (document.getElementById('nit').textContent = id);
-
-    // ── side panel ────────────────────────────────────────────────────
     document.getElementById('np-title').textContent = id;
+
     const catEl = document.getElementById('np-cat');
     catEl.textContent = cat;
     catEl.style.color = npLobeColors[cat] || '#aaccdd';
-    catEl.style.background = 'rgba(' + (parseInt(npLobeColors[cat].slice(1,3),16))+','+(parseInt(npLobeColors[cat].slice(3,5),16))+','+(parseInt(npLobeColors[cat].slice(5,7),16))+',.18)';
-    document.getElementById('np-stats').textContent =
-        DATA.adj[idx].length + ' synapses · ' + DATA.words[idx] + ' words';
+    const cR = parseInt(npLobeColors[cat].slice(1,3),16),
+          cG = parseInt(npLobeColors[cat].slice(3,5),16),
+          cB = parseInt(npLobeColors[cat].slice(5,7),16);
+    catEl.style.background = 'rgba(' + cR + ',' + cG + ',' + cB + ',.18)';
+
+    const inLinks = (DATA.wikiIn[idx] || []).length;
+    const outLinks = (DATA.wikiOut[idx] || []).length;
+    document.getElementById('np-stats').innerHTML =
+        DATA.adj[idx].length + ' synapses · ' +
+        DATA.words[idx].toLocaleString() + ' words · ' +
+        humanAge(DATA.daysOld[idx]);
 
     const np = document.getElementById('note-panel');
     np.classList.add('open');
@@ -1003,30 +1137,44 @@ async function showNodeInfo(idx) {
         const r = await fetch('/api/note?path=' + encodeURIComponent(relPath));
         if (!r.ok) throw new Error(r.statusText);
         const j = await r.json();
-        // Strip YAML frontmatter for prettier rendering
         let md = j.content.replace(/^---\\s*\\n[\\s\\S]*?\\n---\\s*\\n/, '');
-        // Convert Obsidian [[wikilinks]] to plain bold so they don't 404
         md = md.replace(/\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]/g, (_, l, a) => '**' + (a || l) + '**');
         content.innerHTML = marked.parse(md);
 
-        // ── append "connected neurons" footer ─────────────────────────
-        const nbrs = DATA.adj[idx].slice(0, 20);
-        if (nbrs.length) {
-            const list = nbrs.map(n => {
-                return '<a href="#" data-idx="' + n + '">' + DATA.ids[n] + '</a>';
-            }).join(' · ');
+        // ── BACKLINKS: who links TO this note (semantic only) ──────────
+        const back = DATA.wikiIn[idx] || [];
+        if (back.length) {
+            const list = back.slice(0, 30).map(n => '<a href="#" data-idx="' + n + '">↶ ' + DATA.ids[n] + '</a>').join(' · ');
             content.insertAdjacentHTML('beforeend',
-                '<hr style="border:none;border-top:1px solid rgba(140,200,230,.12);margin:24px 0 14px"/>' +
-                '<div style="font-size:9px;letter-spacing:2px;color:#7affc4;margin-bottom:8px">◇ CONNECTED ' + DATA.adj[idx].length + '</div>' +
-                '<div style="font-size:11px;line-height:1.8">' + list + '</div>');
-            content.querySelectorAll('a[data-idx]').forEach(a => {
-                a.addEventListener('click', e => {
-                    e.preventDefault();
-                    const j = +a.getAttribute('data-idx');
-                    selectByIndex(j);
-                });
-            });
+                '<hr class="np-sep"/>' +
+                '<div class="np-section-title">◀ BACKLINKED FROM ' + back.length + '</div>' +
+                '<div class="np-link-list">' + list + '</div>');
         }
+        // ── OUTGOING wiki-links ────────────────────────────────────────
+        const out = DATA.wikiOut[idx] || [];
+        if (out.length) {
+            const list = out.slice(0, 30).map(n => '<a href="#" data-idx="' + n + '">↷ ' + DATA.ids[n] + '</a>').join(' · ');
+            content.insertAdjacentHTML('beforeend',
+                '<hr class="np-sep"/>' +
+                '<div class="np-section-title">▶ LINKS TO ' + out.length + '</div>' +
+                '<div class="np-link-list">' + list + '</div>');
+        }
+        // ── SIBLING connections (folder / keyword / hub edges) ──────────
+        const allConn = new Set(DATA.adj[idx]);
+        out.forEach(n => allConn.delete(n));
+        back.forEach(n => allConn.delete(n));
+        const siblings = [...allConn].slice(0, 24);
+        if (siblings.length) {
+            const list = siblings.map(n => '<a href="#" data-idx="' + n + '">' + DATA.ids[n] + '</a>').join(' · ');
+            content.insertAdjacentHTML('beforeend',
+                '<hr class="np-sep"/>' +
+                '<div class="np-section-title">◇ RELATED ' + allConn.size + '</div>' +
+                '<div class="np-link-list">' + list + '</div>');
+        }
+
+        content.querySelectorAll('a[data-idx]').forEach(a => {
+            a.addEventListener('click', e => { e.preventDefault(); selectByIndex(+a.getAttribute('data-idx')); });
+        });
     } catch (e) {
         content.innerHTML = '<em style="color:#ff7a99">could not load: ' + e.message + '</em>';
     }
@@ -1034,6 +1182,7 @@ async function showNodeInfo(idx) {
 
 function selectByIndex(idx) {
     showNodeInfo(idx);
+    applyNeighbourhood(idx);
     fireNeuron(idx, 0, clock.getElapsedTime());
     const tgt = new THREE.Vector3(DATA.xs[idx], DATA.ys[idx], DATA.zs[idx]);
     const dir = camera.position.clone().sub(tgt).normalize().multiplyScalar(220);
@@ -1043,9 +1192,70 @@ function selectByIndex(idx) {
 function clearSelection() {
     document.getElementById('note-panel').classList.remove('open');
     document.getElementById('sf').textContent = '—';
+    applyNeighbourhood(null);
 }
 
 // ── panel buttons ─────────────────────────────────────────────────────
+// ── DASHBOARD ─────────────────────────────────────────────────────────
+function openDashboard() {
+    const grid = document.getElementById('dash-grid');
+    const rows = (title, items, badge) =>
+        '<section><h3>' + title + '</h3><ol>' +
+        items.map(([idx, label, sub]) =>
+            '<li data-idx="' + idx + '"><span class="dn">' + label + '</span><span class="dx">' + (sub || '') + '</span></li>'
+        ).join('') + '</ol></section>';
+
+    // Top hubs (by total degree)
+    const allIdx = DATA.ids.map((_, i) => i);
+    const topHubs = allIdx.slice().sort((a, b) => DATA.adj[b].length - DATA.adj[a].length).slice(0, 12)
+        .map(i => [i, DATA.ids[i], DATA.adj[i].length + ' syn']);
+
+    // Recently modified (last 14 days, top by mtime)
+    const recentList = allIdx.filter(i => DATA.daysOld[i] < 14)
+        .sort((a, b) => DATA.daysOld[a] - DATA.daysOld[b]).slice(0, 12)
+        .map(i => [i, DATA.ids[i], humanAge(DATA.daysOld[i])]);
+
+    // Orphan-ish (low degree, real notes with paths)
+    const weakly = allIdx.filter(i => DATA.adj[i].length <= 1 && DATA.paths[i])
+        .sort((a, b) => DATA.words[b] - DATA.words[a]).slice(0, 12)
+        .map(i => [i, DATA.ids[i], DATA.words[i] + 'w']);
+
+    // Per-cortex counts + click to isolate
+    const catCounts = {};
+    for (const c of DATA.categories) catCounts[c] = 0;
+    for (const c of DATA.cats) catCounts[c] = (catCounts[c] || 0) + 1;
+
+    grid.innerHTML =
+        rows('▲  Top Hubs', topHubs) +
+        rows('●  Recently Modified', recentList) +
+        rows('○  Lowly Connected', weakly) +
+        '<section><h3>◇  Cortexes</h3><ol>' +
+            DATA.categories.map(c =>
+                '<li data-cat="' + c + '"><span class="dn" style="color:' + (DATA.lobes[c]?.color || '#cdf') + '">' + c + '</span><span class="dx">' + (catCounts[c] || 0) + '</span></li>'
+            ).join('') + '</ol></section>';
+
+    grid.querySelectorAll('li[data-idx]').forEach(li => {
+        li.addEventListener('click', () => {
+            selectByIndex(+li.getAttribute('data-idx'));
+            closeDashboard();
+        });
+    });
+    grid.querySelectorAll('li[data-cat]').forEach(li => {
+        li.addEventListener('click', () => {
+            const cat = li.getAttribute('data-cat');
+            for (const c of DATA.categories) params['c' + c] = (c === cat);
+            gui.controllersRecursive().forEach(ct => ct.updateDisplay());
+            applyAll();
+            closeDashboard();
+        });
+    });
+
+    document.getElementById('dash').classList.add('open');
+}
+function closeDashboard() { document.getElementById('dash').classList.remove('open'); }
+document.getElementById('dash-btn').addEventListener('click', openDashboard);
+document.getElementById('dash-close').addEventListener('click', closeDashboard);
+
 document.getElementById('np-close').addEventListener('click', clearSelection);
 document.getElementById('np-obsidian').addEventListener('click', () => {
     const rel = document.getElementById('note-panel').dataset.path;
@@ -1190,10 +1400,15 @@ document.getElementById('sn').textContent = N;
 document.getElementById('sl').textContent = NL;
 
 document.addEventListener('keydown', e => {
-    if (e.code === 'Space')  { e.preventDefault(); flyTo(new THREE.Vector3(0,60,760), new THREE.Vector3(0,0,0)); }
+    if (e.target.matches && e.target.matches('input,textarea')) return;
+    if (e.code === 'Space')  { e.preventDefault(); flyTo(new THREE.Vector3(0,80,1250), new THREE.Vector3(0,0,0)); }
     if (e.code === 'KeyF')   { fireStorm(clock.getElapsedTime()); }
+    if (e.code === 'KeyD')   { document.getElementById('dash').classList.contains('open') ? closeDashboard() : openDashboard(); }
+    if (e.code === 'KeyR')   { params.recencyOn = !params.recencyOn; gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); }
+    if (e.code === 'Slash')  { e.preventDefault(); document.getElementById('si').focus(); }
     if (e.code === 'Escape') {
         clearSelection();
+        closeDashboard();
         document.getElementById('si').value='';
         document.getElementById('si').dispatchEvent(new Event('input'));
         isolated = null; applyIsolation();
@@ -1234,6 +1449,9 @@ const defaults = {
     nebulaHue:       0.0,
     nebulaPulse:     1.0,
     starDensity:     1.0,
+    // recency
+    recencyOn:       false,
+    recencyStrength: 1.0,
     // motion
     autoRotate:      true,
     rotateSpeed:     0.15,
@@ -1288,6 +1506,8 @@ function applyAll() {
     nebulaHueU.value       = params.nebulaHue;
     nebulaPulseU.value     = params.nebulaPulse;
     starDensityU.value     = params.starDensity;
+    // recency
+    recencyU.value         = params.recencyOn ? params.recencyStrength : 0.0;
     // motion
     controls.autoRotate = params.autoRotate;
     controls.autoRotateSpeed = params.rotateSpeed;
@@ -1333,6 +1553,11 @@ fNeb.add(params, 'nebulaIntensity', 0, 3,    0.05).name('nebula brightness').onC
 fNeb.add(params, 'nebulaHue',      -3.14, 3.14, 0.01).name('colour field').onChange(applyAll);
 fNeb.add(params, 'nebulaPulse',     0, 3,    0.05).name('pulse depth').onChange(applyAll);
 fNeb.add(params, 'starDensity',     0, 3,    0.05).name('star density').onChange(applyAll);
+
+// ── RECENCY folder ──────────────────────────────────────────
+const fRec = gui.addFolder('Recency');
+fRec.add(params, 'recencyOn').name('highlight fresh notes').onChange(applyAll);
+fRec.add(params, 'recencyStrength', 0, 2, 0.05).name('strength').onChange(applyAll);
 
 // ── MOTION folder ─────────────────────────────────────────────
 const fMot = gui.addFolder('Motion');
