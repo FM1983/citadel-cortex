@@ -60,8 +60,9 @@ const CHAT_MAX_TURNS = parseInt(process.env.CHAT_MAX_TURNS || '6', 10);
 // ── OpenAI Whisper + ElevenLabs keys ────────────────────────────────────────
 let OPENAI_KEY     = process.env.OPENAI_API_KEY     || '';
 let ELEVEN_KEY     = process.env.ELEVENLABS_API_KEY || '';
-// Charlotte — British female, classy, narrative-trained.  Override with ELEVENLABS_VOICE_ID.
-const ELEVEN_VOICE = process.env.ELEVENLABS_VOICE_ID || 'rhS7yjXTU4uIlRxXhNW7';
+// Marius Coetzee — 50-year-old white South African male. Override with ELEVENLABS_VOICE_ID.
+const ELEVEN_VOICE = process.env.ELEVENLABS_VOICE_ID || 'n0ewC1nRdE3icIL01Xrs';
+const ELEVEN_SPEED = parseFloat(process.env.ELEVENLABS_SPEED || '1.15');
 if (!OPENAI_KEY || !ELEVEN_KEY) {
     const home = require('os').homedir();
     for (const f of [
@@ -497,7 +498,7 @@ http.createServer((req, res) => {
                     body: JSON.stringify({
                         text,
                         model_id: 'eleven_turbo_v2_5',
-                        voice_settings: { stability: 0.68, similarity_boost: 0.85, style: 0.15, use_speaker_boost: true },
+                        voice_settings: { stability: 0.55, similarity_boost: 0.85, style: 0.28, use_speaker_boost: true, speed: ELEVEN_SPEED },
                     }),
                 });
                 if (!r.ok) return sendJSON(res, 502, { error: 'elevenlabs ' + r.status + ': ' + (await r.text()).slice(0, 200) });
