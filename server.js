@@ -83,8 +83,13 @@ if (!OPENAI_KEY || !ELEVEN_KEY) {
     }
 }
 
-// ── Tool definitions for the agentic navigator loop ────────────────────────
+// ── Tool definitions for Marius the Vault Manager ──────────────────────────
 const NAVIGATOR_TOOLS = [
+    {
+        name: 'current_time',
+        description: 'Get the current date and time in New Zealand (Pacific/Auckland). Use this whenever the user asks about "today", "this week", "recent", "lately", or when reasoning about deadlines, ages, or what is due.',
+        input_schema: { type: 'object', properties: {} },
+    },
     {
         name: 'read_note',
         description: "Read the full markdown content of one vault note. Use this when the user asks 'what does X say', when you need to summarise content, when comparing two matters, or when a candidate title alone is not enough to answer. Returns the note's text (first ~8 KB). Pass the integer idx from the candidate table.",
@@ -96,7 +101,7 @@ const NAVIGATOR_TOOLS = [
     },
     {
         name: 'search_brain',
-        description: "Search Stella's second-brain (Citadel's institutional memory) for additional context not captured in the candidate node list. Returns up to 6 relevant snippets with source labels. Use when the user asks something the visible vault may not fully answer.",
+        description: "Search Stella's second-brain (Citadel's institutional memory). Returns up to 6 indexed snippets with source labels. Use for 'what do we know about X' type questions, or to find content beyond what is visible in the candidate node list (e.g. Misc-Working, Police-Stopsign, Limited-license).",
         input_schema: {
             type: 'object',
             properties: { query: { type: 'string', description: 'Natural-language search query' } },
@@ -104,8 +109,44 @@ const NAVIGATOR_TOOLS = [
         },
     },
     {
+        name: 'list_recent',
+        description: "List the most recently modified vault notes (sorted newest first). Use when the user asks 'what is moving', 'what is fresh', 'what changed recently'. Optionally filter by cortex.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                days:   { type: 'integer', description: 'How many days back (default 14)' },
+                cortex: { type: 'string', description: 'Filter by cortex (PROJECTS, LITIGATION, etc.) — leave blank for all', enum: ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','LIGHTSPEED','ADMINISTRATION','TASTE','ARCHIVES','MISC','ALL'] },
+                limit:  { type: 'integer', description: 'Max results (default 15)' },
+            },
+        },
+    },
+    {
+        name: 'list_hubs',
+        description: "List the most-connected vault notes (by synapse count). Use to find central / important nodes in a cortex or across the vault.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                cortex: { type: 'string', description: 'Filter by cortex, or ALL', enum: ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','LIGHTSPEED','ADMINISTRATION','TASTE','ARCHIVES','MISC','ALL'] },
+                limit:  { type: 'integer', description: 'Max results (default 10)' },
+            },
+        },
+    },
+    {
+        name: 'write_note',
+        description: "CAPTURE a new note to Farhad's brain. Use ONLY when the user explicitly says 'note that…', 'log this…', 'remember…', 'capture this…', or similar. Writes to Stella's brain vault at Marius-Captures/<date>/<slug>. Always confirm in your reply what you captured.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                title: { type: 'string', description: 'Short descriptive title (5-12 words)' },
+                body:  { type: 'string', description: 'Full markdown body — keep it tight and structured' },
+                tags:  { type: 'array', items: { type: 'string' }, description: '2-6 single-word lowercase tags' },
+            },
+            required: ['title', 'body'],
+        },
+    },
+    {
         name: 'propose_tour',
-        description: "Propose a guided 3D camera tour through a sequence of 3–8 vault nodes. The user will see a play button; when they click it, the camera flies through each node and opens the side panel. Use this whenever the user asks for a tour, walk-through, journey, or overview.",
+        description: "Propose a guided 3D camera tour through 3–8 vault nodes. The user sees a play button; clicking flies the camera through each node, opening its content. Use this whenever they ask for a tour, walk-through, journey, or overview of a region of the vault.",
         input_schema: {
             type: 'object',
             properties: {
@@ -136,7 +177,74 @@ const NAVIGATOR_TOOLS = [
     },
 ];
 
-async function executeNavigatorTool(name, input, candidateLookup) {
+// Stella control token for write_note (loaded lazily)
+let STELLA_CONTROL_TOKEN = process.env.STELLA_CONTROL_TOKEN || '';
+if (!STELLA_CONTROL_TOKEN) {
+    for (const f of [
+        path.join(require('os').homedir(), 'Repo/Stella-Agent/.env.local'),
+        path.join(require('os').homedir(), '.local/share/citadel-research-desk/.env'),
+    ]) {
+        try {
+            const m = fs.readFileSync(f, 'utf8').match(/^STELLA_CONTROL_TOKEN\s*=\s*(.+)$/m);
+            if (m) { STELLA_CONTROL_TOKEN = m[1].trim().replace(/^["']|["']$/g, ''); break; }
+        } catch (e) {}
+    }
+}
+
+async function executeNavigatorTool(name, input, candidateLookup, allCandidates) {
+    if (name === 'current_time') {
+        const now = new Date();
+        const nzFmt = new Intl.DateTimeFormat('en-NZ', {
+            timeZone: 'Pacific/Auckland', weekday: 'long', day: 'numeric',
+            month: 'long', year: 'numeric', hour: 'numeric', minute: 'numeric'
+        });
+        return { ok: true, nz: nzFmt.format(now), iso: now.toISOString() };
+    }
+    if (name === 'list_recent') {
+        const days   = input.days   || 14;
+        const limit  = input.limit  || 15;
+        const cortex = input.cortex && input.cortex !== 'ALL' ? input.cortex : null;
+        const filtered = (allCandidates || []).filter(c =>
+            (!cortex || c.cat === cortex) &&
+            typeof c.daysOld === 'number' && c.daysOld < days
+        ).sort((a, b) => a.daysOld - b.daysOld).slice(0, limit);
+        return { ok: true, count: filtered.length, days, cortex,
+            items: filtered.map(c => ({ idx: c.idx, id: c.id, cortex: c.cat, days_ago: c.daysOld })) };
+    }
+    if (name === 'list_hubs') {
+        const limit = input.limit || 10;
+        const cortex = input.cortex && input.cortex !== 'ALL' ? input.cortex : null;
+        const filtered = (allCandidates || []).filter(c => !cortex || c.cat === cortex)
+            .sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, limit);
+        return { ok: true, count: filtered.length, cortex,
+            items: filtered.map(c => ({ idx: c.idx, id: c.id, cortex: c.cat, synapses: c.degree })) };
+    }
+    if (name === 'write_note') {
+        if (!STELLA_CONTROL_TOKEN) return { error: 'STELLA_CONTROL_TOKEN not set — cannot write' };
+        const title = String(input.title || '').slice(0, 140).trim();
+        const body  = String(input.body  || '').slice(0, 50000).trim();
+        if (!title || !body) return { error: 'title and body required' };
+        const d = new Date();
+        const dateFolder = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        try {
+            const r = await fetch(STELLA_URL + '/brain/notes', {
+                method: 'POST',
+                headers: { 'x-stella-control-token': STELLA_CONTROL_TOKEN, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    vault_id: 'brain',
+                    folder:   'Marius-Captures/' + dateFolder,
+                    title,
+                    body,
+                    tags:     (input.tags || []).slice(0, 8),
+                    source_ref: 'marius://capture/' + Date.now(),
+                }),
+            });
+            if (!r.ok) return { error: 'brain/notes ' + r.status + ': ' + (await r.text()).slice(0, 160) };
+            const j = await r.json();
+            return { ok: true, captured: true, path: j?.note?.relative_path || '', vault: 'brain' };
+        } catch (e) { return { error: e.message }; }
+    }
+
     if (name === 'read_note') {
         const cand = candidateLookup[input.idx];
         if (!cand) return { error: 'idx ' + input.idx + ' not in candidates' };
@@ -665,28 +773,39 @@ http.createServer((req, res) => {
             for (const c of slice) candidateLookup[c.idx] = c;
 
             const systemPrompt = [
-                'You are CITADEL NAVIGATOR — an agentic guide for Farhad Moinfar through his Citadel Capital knowledge vault, rendered as a 3D neural visualisation.',
+                "You are MARIUS — vault manager for Farhad Moinfar's Citadel Capital, rendered as a voice over a 3D neural visualisation of his knowledge graph.",
                 '',
-                'You have TOOLS available — use them aggressively:',
-                ' • read_note(idx)      — pull the full text of a note when you need to actually understand or summarise it',
-                ' • search_brain(query) — query Stella, the second-brain agent, for institutional memory beyond what is visible',
-                ' • propose_tour(nodes, captions, intro) — when the user wants a journey/walk-through/overview, USE THIS — do not just describe the tour in prose',
-                ' • open_note(idx)      — when the user wants to focus on one specific note',
-                ' • focus_cortex(cat)   — when the user wants to isolate one category visually',
+                'Personality:',
+                ' • Background: 50-year-old white South African, lifelong operator, dry and direct.',
+                ' • Voice: Afrikaans-flavoured English — sparingly drop "boet", "lekker", "eish", "my china", "ja nee" (no more than one per reply, NEVER force it).',
+                ' • Manner: shrewd, slightly sardonic, allergic to corporate fluff. Treat the vault as yours to manage — refer to it as "your vault" to Farhad, but speak of "the IRD thing", "the Babich situation", "this Lowthers business".',
+                ' • Smart: skim, summarise, prioritise. Match register to topic — litigation = sharp and clear; design = a bit warmer; admin = bored amused; tasteful matters (TASTE cortex) = playful.',
+                ' • Honest: if something is rubbish, say so. If Stella returned nothing, say it returned nothing. No padding.',
+                '',
+                'You have TOOLS — use them aggressively, do not guess:',
+                '  current_time           — date/time NZ (always call FIRST for any "today/recent/this week" query)',
+                '  read_note(idx)         — pull full markdown of a vault note before summarising it',
+                '  search_brain(query)    — Stella\'s indexed second-brain (Misc-Working, Police-Stopsign, Limited-license etc)',
+                '  list_recent(days,cortex) — fresh notes sorted newest first',
+                '  list_hubs(cortex)      — most-connected nodes (the central matters)',
+                '  write_note(title,body,tags) — CAPTURE TO BRAIN — only when user explicitly says "note that / log / remember / capture"',
+                '  propose_tour(nodes,...) — for "tour / journey / walk through / show me" — USE THIS, don\'t prose-narrate',
+                '  open_note(idx)         — drill into a single note',
+                '  focus_cortex(cortex)   — isolate one cortex visually',
                 '',
                 'Candidate visible nodes (idx | cortex | days_old | title):',
                 table,
                 '',
-                'Cortexes: PROJECTS, LITIGATION, DESIGN, ADMINISTRATION, RESEARCH, CONTACTS, ARCHIVES, MISC.',
+                'Cortexes: PROJECTS, LITIGATION, PEOPLE, CONTACTS, DESIGN, RESEARCH, LIGHTSPEED, ADMINISTRATION, TASTE, ARCHIVES, MISC.',
                 '',
                 'Rules:',
-                ' • Tool indices must come from the candidate table; never invent.',
-                ' • For "tour me through X" / "show me Y" — call propose_tour with 4–8 nodes and a brief intro.',
-                ' • For "what does X say" / "summarise" / "compare" — call read_note first, then answer from the actual content.',
-                ' • For broad "what do we know about X" — try search_brain too, then synthesise.',
-                ' • Keep the final assistant message concise (2–6 sentences). Tools do the heavy lifting.',
-                ' • Be honest if Stella is offline or returns nothing — the user wants the truth, not padding.',
-                ' • Refer to Farhad in second person ("you"); refer to people / entities by their names.',
+                ' • Tool indices MUST come from the candidate table; never invent.',
+                ' • Spoken voice — keep replies CONCISE (2-5 sentences). Voice is being played back to him; long monologues are tiresome.',
+                ' • For broad knowledge questions, chain: search_brain + read_note + then answer.',
+                ' • For "tour me through" — call propose_tour, don\'t describe it in prose.',
+                ' • Avoid markdown headers, asterisks, bullets in the spoken reply text — sounds robotic when read aloud. Write like you would speak.',
+                ' • Refer to Farhad in second person ("your IRD thing", "your Babich call"). Refer to entities/people by name.',
+                ' • If you write a note via write_note, confirm what was captured in your reply.',
             ].join('\n');
 
             // Track ui actions, server-side tool transcript, Stella hits
@@ -719,7 +838,7 @@ http.createServer((req, res) => {
                     const toolResults = [];
                     for (const b of blocks) {
                         if (b.type !== 'tool_use') continue;
-                        const result = await executeNavigatorTool(b.name, b.input, candidateLookup);
+                        const result = await executeNavigatorTool(b.name, b.input, candidateLookup, slice);
                         if (b.name === 'search_brain' && result.chunks) stellaUsed += result.chunks.length;
                         if (result.ui_action) uiActions.push(result.ui_action);
                         transcript.push({
@@ -727,8 +846,12 @@ http.createServer((req, res) => {
                             input: b.input,
                             summary:
                                 result.error                   ? '⚠ ' + result.error :
+                                b.name === 'current_time'       ? '⌚ now' :
                                 b.name === 'read_note'          ? '📖 ' + (result.id || '?').slice(0, 48) :
                                 b.name === 'search_brain'       ? '◉ ' + (result.chunks?.length || 0) + ' chunks' :
+                                b.name === 'list_recent'        ? '● ' + (result.count || 0) + ' recent' :
+                                b.name === 'list_hubs'          ? '▲ ' + (result.count || 0) + ' hubs' :
+                                b.name === 'write_note'         ? '✎ captured: ' + ((result.path || '').split('/').pop() || 'note') :
                                 b.name === 'propose_tour'       ? '⌃ ' + (b.input.nodes?.length || 0) + '-stop tour' :
                                 b.name === 'open_note'          ? '👁  open' :
                                 b.name === 'focus_cortex'       ? '◐ focus ' + b.input.cortex :

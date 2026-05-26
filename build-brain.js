@@ -677,7 +677,7 @@ canvas{display:block;width:100%!important;height:100%!important}
 
 <div id="chat">
   <header>
-    <span class="ct">⌃ CITADEL NAVIGATOR</span>
+    <span class="ct">▤ MARIUS · VAULT MANAGER</span>
     <div style="display:flex;gap:4px">
       <button class="cc" id="chat-speak" title="auto-speak replies" style="font-size:13px;color:#888">🔊</button>
       <button class="cc" id="chat-new"   title="new conversation"   style="font-size:12px;color:#7affc4">↺</button>
@@ -687,7 +687,7 @@ canvas{display:block;width:100%!important;height:100%!important}
   <div id="chat-log"></div>
   <form id="chat-form">
     <button id="chat-mic" type="button" title="hold or click to speak">🎙</button>
-    <input id="chat-input" type="text" placeholder='ask, or hold mic · "tour recent litigation"' autocomplete="off" />
+    <input id="chat-input" type="text" placeholder='ask Marius · or hit mic · "tour recent litigation"' autocomplete="off" />
     <button type="submit">↗</button>
   </form>
 </div>
@@ -709,7 +709,7 @@ canvas{display:block;width:100%!important;height:100%!important}
 <button id="live-fab" title="live conversation (continuous)">🔄</button>
 <div id="live-status">listening…</div>
 
-<button id="chat-btn">⌃ NAVIGATOR</button>
+<button id="chat-btn">▤ MARIUS</button>
 <button id="dash-btn">▤ DASHBOARD</button>
 <button id="fire-btn">⚡ FIRE STORM</button>
 <button id="gui-toggle">⚙ CONTROLS</button>
