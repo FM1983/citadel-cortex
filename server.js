@@ -37,6 +37,25 @@ const AUTH_USER = process.env.AUTH_USER || '';
 const AUTH_PASS = process.env.AUTH_PASS || '';
 const AUTH_ON   = AUTH_USER && AUTH_PASS;
 
+// ── Anthropic key — env var first, then Citadel secret files ────────────────
+let ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
+if (!ANTHROPIC_KEY) {
+    const home = require('os').homedir();
+    const candidates = [
+        path.join(home, '.local/share/citadel-research-desk/.env'),
+        path.join(home, '.config/citadel/env'),
+        path.join(home, '.hermes/.env'),
+    ];
+    for (const f of candidates) {
+        try {
+            const txt = fs.readFileSync(f, 'utf8');
+            const m = txt.match(/^ANTHROPIC_API_KEY\s*=\s*(.+)$/m);
+            if (m) { ANTHROPIC_KEY = m[1].trim().replace(/^["']|["']$/g, ''); break; }
+        } catch (e) {}
+    }
+}
+const CHAT_MODEL = process.env.CHAT_MODEL || 'claude-haiku-4-5';
+
 let rebuildJob = null;
 
 const MIME = {
@@ -86,7 +105,7 @@ http.createServer((req, res) => {
 
     // ── API ──────────────────────────────────────────────────────────────────
     if (url === '/api/manifest') {
-        return sendJSON(res, 200, { vault: VAULT_NAME, vaultPath: VAULT, hasAuth: AUTH_ON });
+        return sendJSON(res, 200, { vault: VAULT_NAME, vaultPath: VAULT, hasAuth: AUTH_ON, hasChat: !!ANTHROPIC_KEY, chatModel: CHAT_MODEL });
     }
     if (url === '/api/note') {
         const p = safeVaultPath(qs.get('path'));
@@ -151,6 +170,84 @@ http.createServer((req, res) => {
         return sendJSON(res, 202, { ok: true, fullScan });
     }
     if (url === '/api/rebuild-status') return sendJSON(res, 200, rebuildJob || { idle: true });
+
+    // ── /api/chat — Claude-backed navigator ─────────────────────────────────
+    if (url === '/api/chat' && req.method === 'POST') {
+        if (!ANTHROPIC_KEY) return sendJSON(res, 503, { error: 'Set ANTHROPIC_API_KEY env var or put it in ~/.hermes/.env' });
+        let body = '';
+        req.on('data', c => body += c);
+        req.on('end', async () => {
+            let parsed;
+            try { parsed = JSON.parse(body); } catch { return sendJSON(res, 400, { error: 'invalid JSON body' }); }
+            const { message, candidates } = parsed;
+            if (!message || !Array.isArray(candidates)) return sendJSON(res, 400, { error: 'missing message or candidates' });
+
+            // build the table the LLM sees — strict, terse, deterministic
+            const table = candidates.slice(0, 100).map(c =>
+                c.idx + '\t' + (c.cat || '').slice(0, 5).padEnd(5) + '\t' +
+                (typeof c.daysOld === 'number' ? c.daysOld + 'd' : '—').padStart(5) + '\t' +
+                String(c.id).slice(0, 88)
+            ).join('\n');
+
+            const systemPrompt = [
+                'You are the navigator for a 3D knowledge-graph visualisation of an Obsidian vault.',
+                'A user asks a plain-English question; you choose a coherent set of nodes to visit and write a tour.',
+                '',
+                'Candidate nodes  (idx | cortex | days_old | title):',
+                table,
+                '',
+                'Cortexes are: PROJECTS, LITIG (litigation), DESIG (design), ADMIN (administration), RESEA (research), CONTA (contacts), ARCHI (archives), MISC.',
+                '',
+                'Return ONLY a single JSON object with this exact shape, no prose, no markdown fence:',
+                '{',
+                '  "summary":   "2-4 sentence narrative overview of what we will see and why",',
+                '  "tour":      [ { "idx": <int from the table>, "note": "one-sentence reason this node is on the tour" }, ... ],',
+                '  "follow_up": ["short related question 1", "short related question 2"]',
+                '}',
+                '',
+                'Rules:',
+                ' - Pick 4–8 nodes unless the user explicitly asks for more or fewer',
+                ' - Order them as a coherent narrative — chronological, hub-first, or grouped by sub-theme',
+                ' - Only use idx values from the candidate table. Never invent IDs.',
+                ' - If no candidate fits, return {"summary": "explanation", "tour": [], "follow_up": ["..."]}',
+                ' - Be terse. Notes 1 line max. Summary 2-4 sentences max.',
+            ].join('\n');
+
+            try {
+                const r = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': ANTHROPIC_KEY,
+                        'anthropic-version': '2023-06-01',
+                        'content-type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: CHAT_MODEL,
+                        max_tokens: 900,
+                        system: systemPrompt,
+                        messages: [{ role: 'user', content: message }],
+                    }),
+                });
+                if (!r.ok) {
+                    const errTxt = await r.text();
+                    return sendJSON(res, 502, { error: 'Anthropic ' + r.status + ': ' + errTxt.slice(0, 240) });
+                }
+                const j = await r.json();
+                const txt = j.content?.[0]?.text || '';
+                // extract leading JSON object
+                const m = txt.match(/\{[\s\S]*\}/);
+                if (!m) return sendJSON(res, 200, { summary: txt, tour: [], follow_up: [], raw: true });
+                let plan;
+                try { plan = JSON.parse(m[0]); } catch (e) {
+                    return sendJSON(res, 200, { summary: txt, tour: [], follow_up: [], raw: true, parseError: e.message });
+                }
+                sendJSON(res, 200, plan);
+            } catch (e) {
+                sendJSON(res, 500, { error: e.message });
+            }
+        });
+        return;
+    }
 
     // ── static ───────────────────────────────────────────────────────────────
     if (url === '/') url = '/neural-graph.html';

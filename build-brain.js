@@ -443,6 +443,67 @@ canvas{display:block;width:100%!important;height:100%!important}
 #dash-btn{position:fixed;bottom:80px;right:155px;background:rgba(122,255,196,.13);border:1px solid rgba(122,255,196,.5);color:#7affc4;font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;z-index:30;pointer-events:auto;text-shadow:0 0 8px rgba(122,255,196,.6);transition:all .15s;border-radius:2px}
 #dash-btn:hover{background:rgba(122,255,196,.28);box-shadow:0 0 20px rgba(122,255,196,.35)}
 
+/* ── NAVIGATOR CHAT ─────────────────────────────────────────── */
+#chat{position:fixed;left:18px;bottom:120px;width:380px;max-width:92vw;background:rgba(5,12,22,.94);
+  border:1px solid rgba(122,255,196,.25);backdrop-filter:blur(14px);border-radius:4px;
+  z-index:65;display:none;flex-direction:column;color:#cdf;font-family:'Courier New',monospace;
+  box-shadow:0 8px 40px rgba(0,0,0,.5),0 0 30px rgba(122,255,196,.06);max-height:74vh;pointer-events:auto}
+#chat.open{display:flex}
+#chat header{padding:11px 15px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(122,255,196,.16)}
+#chat header .ct{font-size:10px;letter-spacing:4px;color:#7affc4;font-weight:bold;text-shadow:0 0 8px rgba(122,255,196,.4)}
+#chat header .cc{background:none;border:none;color:#ee9ce6;font-size:16px;cursor:pointer;padding:2px 8px}
+#chat-log{flex:1;overflow-y:auto;padding:14px 16px;font-size:11px;line-height:1.55;min-height:80px;max-height:48vh}
+#chat-log::-webkit-scrollbar{width:5px} #chat-log::-webkit-scrollbar-thumb{background:rgba(122,255,196,.25);border-radius:3px}
+.cm-user{color:#8ee0ff;margin-bottom:6px;font-weight:bold}
+.cm-user::before{content:"▷ "; opacity:.7}
+.cm-bot{color:rgba(220,235,250,.92);margin-bottom:14px;background:rgba(122,255,196,.07);padding:10px 12px;border-left:2px solid rgba(122,255,196,.4);border-radius:0 3px 3px 0}
+.cm-loading{color:rgba(122,255,196,.6);font-style:italic;animation:blink 1.2s infinite}
+.cm-error{color:#ff7a99;font-style:italic}
+.cm-tour{margin-top:10px;display:flex;flex-direction:column;gap:5px;padding-top:8px;border-top:1px dashed rgba(122,255,196,.18)}
+.cm-stop{display:flex;gap:6px;margin-top:6px;font-size:9px;letter-spacing:1px}
+.cm-tour-step{display:flex;gap:8px;cursor:pointer;padding:5px 7px;border-radius:2px;background:rgba(140,200,230,.04);transition:background .12s}
+.cm-tour-step:hover{background:rgba(140,200,230,.14)}
+.cm-tour-num{color:#7affc4;font-weight:bold;flex-shrink:0;width:14px}
+.cm-tour-id{flex:1;color:#fff;font-weight:bold;font-size:10.5px}
+.cm-tour-note{display:block;color:rgba(180,220,250,.7);font-size:9.5px;margin-top:2px}
+.cm-followup{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.cm-followup button{background:rgba(140,200,230,.08);border:1px solid rgba(140,200,230,.25);color:#aaccdd;
+  font-family:'Courier New',monospace;font-size:9px;letter-spacing:1px;padding:4px 8px;cursor:pointer;border-radius:2px}
+.cm-followup button:hover{background:rgba(140,200,230,.2);color:#fff}
+.cm-tour-actions{display:flex;gap:6px;margin-top:8px}
+.cm-tour-actions button{flex:1;background:rgba(122,255,196,.14);border:1px solid rgba(122,255,196,.5);color:#7affc4;
+  font-family:'Courier New',monospace;font-size:9px;letter-spacing:2px;padding:6px 10px;cursor:pointer;border-radius:2px}
+.cm-tour-actions button:hover{background:rgba(122,255,196,.28)}
+#chat-form{display:flex;border-top:1px solid rgba(122,255,196,.16);padding:10px 12px;gap:8px}
+#chat-input{flex:1;background:rgba(0,0,0,.35);border:1px solid rgba(140,200,230,.2);color:#cdf;
+  font-family:'Courier New',monospace;font-size:11px;padding:8px 11px;outline:none;border-radius:2px}
+#chat-input:focus{border-color:rgba(122,255,196,.6);box-shadow:0 0 10px rgba(122,255,196,.2)}
+#chat-input::placeholder{color:rgba(140,200,230,.4)}
+#chat-form button{background:rgba(122,255,196,.14);border:1px solid rgba(122,255,196,.5);color:#7affc4;
+  font-family:'Courier New',monospace;font-size:11px;padding:8px 13px;cursor:pointer;border-radius:2px}
+#chat-form button:hover{background:rgba(122,255,196,.28)}
+#chat-btn{position:fixed;bottom:80px;left:18px;background:rgba(122,255,196,.13);border:1px solid rgba(122,255,196,.5);color:#7affc4;
+  font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;z-index:30;pointer-events:auto;
+  text-shadow:0 0 8px rgba(122,255,196,.6);transition:all .15s;border-radius:2px}
+#chat-btn:hover{background:rgba(122,255,196,.28);box-shadow:0 0 20px rgba(122,255,196,.35)}
+
+/* ── TOUR HUD overlay (when a tour is playing) ──────────────── */
+#tour-hud{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(140%);
+  background:rgba(5,12,22,.93);border:1px solid rgba(122,255,196,.4);backdrop-filter:blur(10px);
+  padding:14px 22px;z-index:55;pointer-events:auto;border-radius:4px;min-width:380px;max-width:90vw;
+  transition:transform .3s cubic-bezier(.2,.7,.2,1);box-shadow:0 0 30px rgba(122,255,196,.18)}
+#tour-hud.open{transform:translateX(-50%) translateY(0)}
+#tour-hud .tt{font-size:8px;letter-spacing:3px;color:#7affc4;margin-bottom:6px;display:flex;justify-content:space-between}
+#tour-hud .th-title{font-size:13px;font-weight:bold;color:#fff;text-shadow:0 0 10px rgba(140,200,230,.5);margin-bottom:5px;line-height:1.4}
+#tour-hud .th-note{font-size:10.5px;color:rgba(180,220,250,.8);line-height:1.5}
+#tour-hud .th-bar{height:2px;background:rgba(140,200,230,.15);margin:10px 0 8px;border-radius:1px;overflow:hidden}
+#tour-hud .th-fill{height:100%;background:linear-gradient(90deg,#7affc4,#8ee0ff);width:0%;transition:width .3s linear}
+#tour-hud .th-ctrl{display:flex;gap:8px;font-size:9px;letter-spacing:2px}
+#tour-hud .th-ctrl button{background:rgba(140,200,230,.1);border:1px solid rgba(140,200,230,.3);color:#cdf;
+  font-family:'Courier New',monospace;font-size:9px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border-radius:2px}
+#tour-hud .th-ctrl button:hover{background:rgba(140,200,230,.22)}
+#tour-hud .th-ctrl button.stop{color:#ff7a99;border-color:rgba(255,122,153,.4)}
+
 /* ── MOBILE / NARROW ─────────────────────────────────────── */
 @media (max-width: 720px) {
     #tr{display:none}
@@ -452,13 +513,16 @@ canvas{display:block;width:100%!important;height:100%!important}
     #note-panel{width:100vw;max-width:100vw;border-right:none}
     #si{width:75vw;font-size:12px;padding:9px 14px}
     #search-results{width:75vw}
-    #fire-btn,#gui-toggle,#dash-btn{font-size:9px;padding:7px 11px;letter-spacing:2px}
+    #fire-btn,#gui-toggle,#dash-btn,#chat-btn{font-size:9px;padding:7px 11px;letter-spacing:2px}
     #fire-btn{bottom:18px;right:18px}
+    #chat-btn{bottom:60px;left:18px}
     #gui-toggle{top:auto;bottom:18px;right:auto;left:18px}
     #dash-btn{bottom:18px;right:140px}
-    .lil-gui.root{width:88vw;max-width:88vw;top:auto;bottom:64px;right:6vw}
+    .lil-gui.root{width:88vw;max-width:88vw;top:auto;bottom:104px;right:6vw}
     #dash{width:96vw;max-height:78vh}
     #dash .dgrid{grid-template-columns:1fr;padding:14px 16px;gap:14px}
+    #chat{left:2vw;right:2vw;bottom:108px;width:96vw;max-width:96vw}
+    #tour-hud{min-width:0;width:94vw;left:50%}
 }
 #fire-btn:hover{background:rgba(238,156,230,.3);box-shadow:0 0 20px rgba(238,156,230,.4)}
 
@@ -533,6 +597,32 @@ canvas{display:block;width:100%!important;height:100%!important}
   <div class="dgrid" id="dash-grid"></div>
 </div>
 
+<div id="chat">
+  <header>
+    <span class="ct">⌃ CITADEL NAVIGATOR</span>
+    <button class="cc" id="chat-close">✕</button>
+  </header>
+  <div id="chat-log"></div>
+  <form id="chat-form">
+    <input id="chat-input" type="text" placeholder='ask anything · e.g. "tour recent litigation"' autocomplete="off" />
+    <button type="submit">↗</button>
+  </form>
+</div>
+
+<div id="tour-hud">
+  <div class="tt"><span id="th-step">step 1 / 6</span><span id="th-cat" style="color:#7affc4"></span></div>
+  <div class="th-title" id="th-title">—</div>
+  <div class="th-note" id="th-note">—</div>
+  <div class="th-bar"><div class="th-fill" id="th-fill"></div></div>
+  <div class="th-ctrl">
+    <button id="th-prev">◀ prev</button>
+    <button id="th-pause">⏸ pause</button>
+    <button id="th-next">next ▶</button>
+    <button id="th-stop" class="stop">✕ stop</button>
+  </div>
+</div>
+
+<button id="chat-btn">⌃ NAVIGATOR</button>
 <button id="dash-btn">▤ DASHBOARD</button>
 <button id="fire-btn">⚡ FIRE STORM</button>
 <button id="gui-toggle">⚙ CONTROLS</button>
@@ -1542,16 +1632,208 @@ document.getElementById('fire-btn').addEventListener('click', () => fireStorm(cl
 document.getElementById('sn').textContent = N;
 document.getElementById('sl').textContent = NL;
 
+// ════════════════════════════════════════════════════════════════════════════
+// NAVIGATOR CHAT (Claude-backed)
+// ════════════════════════════════════════════════════════════════════════════
+const CAT_HINTS = {
+    'litigation': 'LITIGATION', 'legal': 'LITIGATION', 'ird': 'LITIGATION', 'court': 'LITIGATION',
+    'dispute': 'LITIGATION', 'enforcement': 'LITIGATION', 'lawsuit': 'LITIGATION',
+    'research': 'RESEARCH', 'intel': 'RESEARCH', 'briefing': 'RESEARCH', 'thesis': 'RESEARCH', 'analysis': 'RESEARCH',
+    'project': 'PROJECTS', 'projects': 'PROJECTS', 'deal': 'PROJECTS', 'property': 'PROJECTS',
+    'acquisition': 'PROJECTS', 'babich': 'PROJECTS', 'featherston': 'PROJECTS', 'mclane': 'PROJECTS',
+    'design': 'DESIGN', 'render': 'DESIGN', 'masterplan': 'DESIGN', 'marketing': 'DESIGN', 'media': 'DESIGN',
+    'admin': 'ADMINISTRATION', 'finance': 'ADMINISTRATION', 'accounting': 'ADMINISTRATION',
+    'governance': 'ADMINISTRATION', 'entity': 'ADMINISTRATION', 'tax': 'ADMINISTRATION',
+    'people': 'CONTACTS', 'contact': 'CONTACTS', 'team': 'CONTACTS',
+};
+const RECENT_RE = /\b(recent|recently|fresh|new(est)?|latest|this week|last week|today|yesterday|lately|past few)\b/i;
+const COUNT_RE  = /\b(top|first|last|\d+)\b/i;
+
+function preFilter(message) {
+    const m = message.toLowerCase();
+    let pool = [];
+    for (let i = 0; i < N; i++) pool.push(i);
+
+    // category hint
+    let catFilter = null;
+    for (const [kw, cat] of Object.entries(CAT_HINTS)) {
+        if (m.includes(kw)) { catFilter = cat; break; }
+    }
+    if (catFilter) pool = pool.filter(i => DATA.cats[i] === catFilter);
+
+    // recency hint
+    if (RECENT_RE.test(message)) pool = pool.filter(i => DATA.daysOld[i] < 60);
+
+    // keyword salience: tokens > 3 chars not in stopwords
+    const STOP = new Set(['the','a','an','of','and','to','for','from','with','this','that','what','show','take','find','about','through','journey','tour','give','want','need','look']);
+    const tokens = m.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length >= 4 && !STOP.has(t));
+    const scored = pool.map(i => {
+        const id = DATA.ids[i].toLowerCase();
+        let score = 0;
+        for (const t of tokens) if (id.includes(t)) score += 2;
+        score += DATA.adj[i].length * 0.04;     // degree bias
+        score += Math.max(0, (60 - DATA.daysOld[i])) * 0.03;  // recency bias
+        return [i, score];
+    });
+    scored.sort((a, b) => b[1] - a[1]);
+
+    // if nothing scored, just keep recency / category order
+    return scored.slice(0, 100).map(x => x[0]);
+}
+
+let chatHistory = [];
+function chatRender() {
+    const log = document.getElementById('chat-log');
+    log.innerHTML = chatHistory.map(msg => {
+        if (msg.kind === 'user')    return '<div class="cm-user">' + esc(msg.text) + '</div>';
+        if (msg.kind === 'loading') return '<div class="cm-bot cm-loading">thinking…</div>';
+        if (msg.kind === 'error')   return '<div class="cm-bot cm-error">' + esc(msg.text) + '</div>';
+        // bot reply with optional tour
+        let html = '<div class="cm-bot">' + esc(msg.text);
+        if (msg.tour && msg.tour.length) {
+            html += '<div class="cm-tour">' + msg.tour.map((t, k) =>
+                '<div class="cm-tour-step" data-idx="' + t.idx + '">' +
+                  '<span class="cm-tour-num">' + (k+1) + '</span>' +
+                  '<div><span class="cm-tour-id">' + esc((DATA.ids[t.idx] || '?').slice(0,46)) + '</span>' +
+                  '<span class="cm-tour-note">' + esc(t.note || '') + '</span></div>' +
+                '</div>'
+            ).join('') + '</div>' +
+            '<div class="cm-tour-actions"><button data-act="play" data-mid="' + msg.id + '">▶ play tour</button></div>';
+        }
+        if (msg.follow_up && msg.follow_up.length) {
+            html += '<div class="cm-followup">' + msg.follow_up.map(q =>
+                '<button data-followup="' + esc(q) + '">' + esc(q) + '</button>'
+            ).join('') + '</div>';
+        }
+        html += '</div>';
+        return html;
+    }).join('');
+    log.scrollTop = log.scrollHeight;
+
+    // wire up handlers
+    log.querySelectorAll('.cm-tour-step').forEach(el =>
+        el.addEventListener('click', () => { const idx = +el.getAttribute('data-idx'); selectByIndex(idx); }));
+    log.querySelectorAll('[data-followup]').forEach(b =>
+        b.addEventListener('click', () => { document.getElementById('chat-input').value = b.getAttribute('data-followup'); chatSubmit(); }));
+    log.querySelectorAll('[data-act="play"]').forEach(b =>
+        b.addEventListener('click', () => {
+            const mid = +b.getAttribute('data-mid');
+            const msg = chatHistory.find(m => m.id === mid);
+            if (msg && msg.tour) playTour(msg.tour);
+        }));
+}
+function esc(s){ return String(s).replace(/[<>&"]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+
+async function chatSubmit() {
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    chatHistory.push({ kind: 'user', text });
+    chatHistory.push({ kind: 'loading' });
+    chatRender();
+    try {
+        const candidates = preFilter(text).map(i => ({
+            idx: i, id: DATA.ids[i], cat: DATA.cats[i],
+            daysOld: DATA.daysOld[i], degree: DATA.adj[i].length,
+        }));
+        const r = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text, candidates }),
+        });
+        const j = await r.json();
+        chatHistory.pop();   // remove loading
+        if (j.error) {
+            chatHistory.push({ kind: 'error', text: j.error });
+        } else {
+            chatHistory.push({
+                kind: 'bot',
+                id: Date.now(),
+                text: j.summary || '(no summary)',
+                tour: (j.tour || []).filter(t => Number.isInteger(t.idx) && t.idx >= 0 && t.idx < N),
+                follow_up: j.follow_up || [],
+            });
+        }
+    } catch (e) {
+        chatHistory.pop();
+        chatHistory.push({ kind: 'error', text: e.message });
+    }
+    chatRender();
+}
+
+// ── Tour player ───────────────────────────────────────────────────────
+let tourState = null;
+function playTour(tour) {
+    if (!tour.length) return;
+    closeChat();
+    tourState = { tour, idx: 0, paused: false, timer: null, dwellMs: 6500 };
+    showTourStep();
+    document.getElementById('tour-hud').classList.add('open');
+}
+function showTourStep() {
+    if (!tourState || tourState.idx >= tourState.tour.length) { stopTour(); return; }
+    const step = tourState.tour[tourState.idx];
+    const idx  = step.idx;
+    selectByIndex(idx);
+    document.getElementById('th-step').textContent = 'step ' + (tourState.idx + 1) + ' / ' + tourState.tour.length;
+    document.getElementById('th-cat').textContent  = DATA.cats[idx] || '';
+    document.getElementById('th-title').textContent = DATA.ids[idx] || '';
+    document.getElementById('th-note').textContent  = step.note || '';
+    document.getElementById('th-fill').style.width  = '0%';
+    if (!tourState.paused) scheduleNext();
+}
+function scheduleNext() {
+    if (tourState.timer) clearTimeout(tourState.timer);
+    const start = performance.now();
+    const tick = () => {
+        if (!tourState || tourState.paused) return;
+        const elapsed = performance.now() - start;
+        const pct = Math.min(elapsed / tourState.dwellMs, 1);
+        document.getElementById('th-fill').style.width = (pct * 100) + '%';
+        if (pct >= 1) { tourState.idx++; showTourStep(); }
+        else tourState.timer = requestAnimationFrame(tick);
+    };
+    tourState.timer = requestAnimationFrame(tick);
+}
+function stopTour() {
+    if (tourState && tourState.timer) cancelAnimationFrame(tourState.timer);
+    tourState = null;
+    document.getElementById('tour-hud').classList.remove('open');
+}
+document.getElementById('th-next').addEventListener('click', () => { if (!tourState) return; tourState.idx++; showTourStep(); });
+document.getElementById('th-prev').addEventListener('click', () => { if (!tourState) return; tourState.idx = Math.max(0, tourState.idx - 1); showTourStep(); });
+document.getElementById('th-pause').addEventListener('click', (e) => {
+    if (!tourState) return;
+    tourState.paused = !tourState.paused;
+    e.target.textContent = tourState.paused ? '▶ resume' : '⏸ pause';
+    if (!tourState.paused) scheduleNext();
+});
+document.getElementById('th-stop').addEventListener('click', stopTour);
+
+// ── chat panel open/close ─────────────────────────────────────────────
+function openChat() {
+    document.getElementById('chat').classList.add('open');
+    setTimeout(() => document.getElementById('chat-input').focus(), 50);
+}
+function closeChat() { document.getElementById('chat').classList.remove('open'); }
+document.getElementById('chat-btn').addEventListener('click', openChat);
+document.getElementById('chat-close').addEventListener('click', closeChat);
+document.getElementById('chat-form').addEventListener('submit', e => { e.preventDefault(); chatSubmit(); });
+
 document.addEventListener('keydown', e => {
     if (e.target.matches && e.target.matches('input,textarea')) return;
     if (e.code === 'Space')  { e.preventDefault(); flyTo(new THREE.Vector3(0,80,1250), new THREE.Vector3(0,0,0)); }
     if (e.code === 'KeyF')   { fireStorm(clock.getElapsedTime()); }
     if (e.code === 'KeyD')   { document.getElementById('dash').classList.contains('open') ? closeDashboard() : openDashboard(); }
     if (e.code === 'KeyR')   { params.recencyOn = !params.recencyOn; gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); }
+    if (e.code === 'KeyK')   { document.getElementById('chat').classList.contains('open') ? closeChat() : openChat(); }
     if (e.code === 'Slash')  { e.preventDefault(); document.getElementById('si').focus(); }
     if (e.code === 'Escape') {
+        stopTour();
         clearSelection();
         closeDashboard();
+        closeChat();
         document.getElementById('si').value='';
         document.getElementById('si').dispatchEvent(new Event('input'));
         isolated = null; applyIsolation();
