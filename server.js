@@ -72,10 +72,11 @@ const VOICES = {
         speed:   parseFloat(process.env.ELEVENLABS_SPEED_MARIUS || process.env.ELEVENLABS_SPEED || '1.18'),
     },
     stella: {
-        id:      process.env.ELEVENLABS_VOICE_ID_STELLA || 'U9VgC8Xinl7nnNsyDd3J',
-        // Rachel — fun warm conversational Australian female, 30s
-        stability: 0.45, similarity_boost: 0.88, style: 0.42,
-        speed:   parseFloat(process.env.ELEVENLABS_SPEED_STELLA || '1.10'),
+        id:      process.env.ELEVENLABS_VOICE_ID_STELLA || 'tyepWYJJwJM9TTFIg5U7',
+        // Clara — warm articulate Australian female, calm + confident, beautiful tone.
+        // Foil to Marius: where he's grouchy & dry, she's smooth & engaging.
+        stability: 0.62, similarity_boost: 0.92, style: 0.22,
+        speed:   parseFloat(process.env.ELEVENLABS_SPEED_STELLA || '1.05'),
     },
 };
 if (!OPENAI_KEY || !ELEVEN_KEY) {
