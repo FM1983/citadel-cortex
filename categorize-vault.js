@@ -102,8 +102,9 @@ function keep(rec) {
     if (p.includes('/templates/') || p.includes('/_templates/')) return false;
     // drop hidden / node_modules / __pycache__
     if (p.includes('/node_modules/') || p.includes('/__pycache__/') || p.includes('/.git/')) return false;
-    // drop tiny scraps
-    if ((rec.wordCount || 0) < 40) return false;
+    // ── TASTE notes are short by design — keep them regardless of size ──
+    const isTaste = p.startsWith('taste/') || p.includes('/taste/');
+    if (!isTaste && (rec.wordCount || 0) < 40) return false;
     // drop OS dotfiles
     if (t.startsWith('.')) return false;
     // skip CLAUDE.md / README.md scattered everywhere unless substantial

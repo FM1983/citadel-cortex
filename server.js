@@ -395,6 +395,62 @@ http.createServer((req, res) => {
     if (url === '/api/usage') {
         return sendJSON(res, 200, aggregateUsage());
     }
+
+    // ── /api/taste-import — run an importer in background ──────────────────
+    if (url === '/api/taste-import' && req.method === 'POST') {
+        let body = '';
+        req.on('data', c => body += c);
+        req.on('end', () => {
+            let parsed; try { parsed = JSON.parse(body); } catch { return sendJSON(res, 400, { error: 'bad json' }); }
+            const { source, sourcePath, limit } = parsed;
+            const validSources = { 'stella': 'stella-sensorium.js', 'vision': 'icloud-vision.js', 'instagram': 'instagram.js', 'google': 'google-takeout.js' };
+            const script = validSources[source];
+            if (!script) return sendJSON(res, 400, { error: 'source must be one of: ' + Object.keys(validSources).join(', ') });
+
+            if (rebuildJob && !rebuildJob.done) return sendJSON(res, 409, { error: 'another job running' });
+            rebuildJob = { stage: 'importing-' + source, percent: 0, log: [], done: false, error: null, started: Date.now() };
+
+            const importerPath = path.join(__dirname, 'importers', script);
+            if (!fs.existsSync(importerPath)) return sendJSON(res, 500, { error: 'importer missing: ' + importerPath });
+
+            const argv = [importerPath];
+            if (source === 'instagram' || source === 'google') {
+                if (!sourcePath) return sendJSON(res, 400, { error: source + ' requires sourcePath' });
+                argv.push(sourcePath);
+            }
+            if (source === 'vision' && limit) argv.push('--limit', String(limit));
+            if (source === 'stella' && limit) argv.push('--limit', String(limit));
+
+            const env = { ...process.env, CITADEL_VAULT: VAULT };
+            const p = spawn('node', argv, { cwd: __dirname, env });
+            p.stdout.on('data', d => rebuildJob.log.push(d.toString()));
+            p.stderr.on('data', d => rebuildJob.log.push(d.toString()));
+            p.on('exit', code => {
+                if (code !== 0) { rebuildJob.error = 'importer exit ' + code; rebuildJob.done = true; return; }
+                // chain into a rebuild from cache so TASTE neurons appear immediately
+                rebuildJob.stage = 'categorizing';
+                const p2 = spawn('node', ['categorize-vault.js'], { cwd: __dirname, env });
+                p2.stdout.on('data', d => rebuildJob.log.push(d.toString()));
+                p2.stderr.on('data', d => rebuildJob.log.push(d.toString()));
+                p2.on('exit', c2 => {
+                    if (c2 !== 0) { rebuildJob.error = 'categorize exit ' + c2; rebuildJob.done = true; return; }
+                    rebuildJob.stage = 'building';
+                    const p3 = spawn('node', ['build-brain.js'], { cwd: __dirname, env });
+                    p3.stdout.on('data', d => rebuildJob.log.push(d.toString()));
+                    p3.stderr.on('data', d => rebuildJob.log.push(d.toString()));
+                    p3.on('exit', c3 => {
+                        if (c3 !== 0) { rebuildJob.error = 'build exit ' + c3; }
+                        rebuildJob.done = true;
+                        rebuildJob.stage = 'done';
+                        rebuildJob.percent = 100;
+                        rebuildJob.took = Date.now() - rebuildJob.started;
+                    });
+                });
+            });
+            return sendJSON(res, 202, { ok: true, source });
+        });
+        return;
+    }
     if (url === '/api/stella-ping') {
         if (!STELLA_TOKEN) return sendJSON(res, 503, { reachable: false, error: 'no token configured' });
         const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 1500);

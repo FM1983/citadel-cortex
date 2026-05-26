@@ -1514,11 +1514,17 @@ function showCortexInfo(cat) {
             'Cortex overview · click any neuron to inspect, or commence a guided tour through the most relevant content.' +
         '</div>' +
 
-        '<div style="display:flex;gap:8px;margin-bottom:18px">' +
+        '<div style="display:flex;gap:8px;margin-bottom:12px">' +
             '<button class="np-ctx-btn" data-act="tour-recent" style="background:rgba(122,255,196,.14);border:1px solid rgba(122,255,196,.5);color:#7affc4">⌃  TOUR RECENT MATTERS</button>' +
             '<button class="np-ctx-btn" data-act="tour-hubs"   style="background:rgba(140,200,230,.12);border:1px solid rgba(140,200,230,.5);color:#aaccdd">▲  TOUR HUBS</button>' +
             '<button class="np-ctx-btn" data-act="isolate"      style="background:rgba(238,156,230,.12);border:1px solid rgba(238,156,230,.5);color:#ee9ce6">◐  ISOLATE</button>' +
         '</div>' +
+        (cat === 'TASTE' ? '<div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">' +
+            '<button class="np-ctx-btn" data-act="import-stella"    style="background:rgba(255,158,199,.16);border:1px solid rgba(255,158,199,.55);color:#ff9ec7">📡  STELLA SYNC</button>' +
+            '<button class="np-ctx-btn" data-act="import-vision"    style="background:rgba(255,158,199,.16);border:1px solid rgba(255,158,199,.55);color:#ff9ec7">👁  ANALYSE PHOTOS</button>' +
+            '<button class="np-ctx-btn" data-act="import-instagram" style="background:rgba(255,158,199,.16);border:1px solid rgba(255,158,199,.55);color:#ff9ec7">📱  INSTAGRAM</button>' +
+            '<button class="np-ctx-btn" data-act="import-google"    style="background:rgba(255,158,199,.16);border:1px solid rgba(255,158,199,.55);color:#ff9ec7">🌏  TAKEOUT</button>' +
+        '</div>' : '') +
 
         '<hr class="np-sep" style="margin-top:0"/>' +
         '<div class="np-section-title">●  RECENTLY MODIFIED (' + freshCount + ' in last 30d)</div>' +
@@ -1547,6 +1553,25 @@ function showCortexInfo(cat) {
         document.querySelectorAll('.legend-row').forEach(r =>
             r.style.opacity = (!isolated || r.getAttribute('data-cat') === isolated) ? '1' : '.3');
         applyIsolation();
+    });
+    // TASTE importer buttons
+    const stellaBtn  = root.querySelector('[data-act="import-stella"]');
+    const visionBtn  = root.querySelector('[data-act="import-vision"]');
+    const igBtn      = root.querySelector('[data-act="import-instagram"]');
+    const googBtn    = root.querySelector('[data-act="import-google"]');
+    if (stellaBtn) stellaBtn.addEventListener('click', () => tasteImport('stella'));
+    if (visionBtn) visionBtn.addEventListener('click', () => {
+        const n = prompt('Analyse how many photos with Claude Vision? (~$0.003 each on Haiku)', '12');
+        if (!n) return;
+        tasteImport('vision', null, parseInt(n, 10) || 12);
+    });
+    if (igBtn) igBtn.addEventListener('click', () => {
+        const p = prompt('Path to your Meta data export (folder or .zip):', '');
+        if (p) tasteImport('instagram', p);
+    });
+    if (googBtn) googBtn.addEventListener('click', () => {
+        const p = prompt('Path to Google Takeout (Records.json, Semantic Location History folder, or takeout-*.zip):', '');
+        if (p) tasteImport('google', p);
     });
 
     // fly to the lobe centre
@@ -2283,6 +2308,63 @@ for (const [name, vals] of Object.entries(presets)) {
 const fSync = gui.addFolder('Vault Sync');
 fSync.add({ rebuild: () => runRebuild(false) }, 'rebuild').name('🔄  rebuild from cache (~2s)');
 fSync.add({ rescan:  () => runRebuild(true)  }, 'rescan').name('↻  full re-scan vault (~30s)');
+
+async function tasteImport(source, sourcePath, limit) {
+    if (document.getElementById('rb-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'rb-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,5,15,.78);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);pointer-events:auto';
+    const label = ({stella:'STELLA SENSORIUM', vision:'iCLOUD VISION', instagram:'INSTAGRAM SAVES', google:'GOOGLE TAKEOUT'})[source];
+    modal.innerHTML =
+      '<div style="background:rgba(5,12,22,.97);border:1px solid rgba(255,158,199,.5);padding:32px 42px;min-width:380px;text-align:center;border-radius:4px;font-family:Courier New,monospace">' +
+      '<div style="font-size:14px;letter-spacing:5px;color:#ff9ec7;text-shadow:0 0 14px rgba(255,158,199,.5)">◆ ' + label + ' → TASTE</div>' +
+      '<div id="rb-stage" style="font-size:10px;margin-top:14px;color:#8ee0ff;letter-spacing:3px">starting…</div>' +
+      '<div style="width:300px;height:4px;background:rgba(140,200,230,.15);margin:18px auto;border-radius:2px;overflow:hidden">' +
+        '<div id="rb-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#ff9ec7,#7affc4);transition:width .25s"></div>' +
+      '</div>' +
+      '<div id="rb-pct" style="color:#fff;font-size:18px;letter-spacing:2px">…</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+    try {
+        const r0 = await fetch('/api/taste-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source, sourcePath, limit }),
+        });
+        if (!r0.ok && r0.status !== 202) {
+            const j = await r0.json().catch(() => ({}));
+            throw new Error(j.error || ('HTTP ' + r0.status));
+        }
+        const poll = setInterval(async () => {
+            try {
+                const j = await fetch('/api/rebuild-status').then(r => r.json());
+                document.getElementById('rb-stage').textContent = (j.stage || '…').toUpperCase();
+                document.getElementById('rb-pct').textContent   = (j.percent || 0) + '%';
+                document.getElementById('rb-bar').style.width   = (j.percent || 0) + '%';
+                if (j.done) {
+                    clearInterval(poll);
+                    if (j.error) {
+                        document.getElementById('rb-stage').textContent = '⚠ FAILED';
+                        document.getElementById('rb-stage').style.color = '#ff7a99';
+                        document.getElementById('rb-pct').textContent   = (j.error || '').slice(0, 60);
+                        setTimeout(() => modal.remove(), 5000);
+                    } else {
+                        document.getElementById('rb-stage').textContent = '◆ COMPLETE — reloading';
+                        document.getElementById('rb-stage').style.color = '#ff9ec7';
+                        setTimeout(() => location.reload(), 800);
+                    }
+                }
+            } catch(e) {
+                clearInterval(poll);
+                document.getElementById('rb-stage').textContent = '⚠ ' + e.message;
+                setTimeout(() => modal.remove(), 4000);
+            }
+        }, 800);
+    } catch(e) {
+        document.getElementById('rb-stage').textContent = '⚠ ' + e.message;
+        setTimeout(() => modal.remove(), 4000);
+    }
+}
 
 async function runRebuild(fullScan) {
     if (document.getElementById('rb-modal')) return;
