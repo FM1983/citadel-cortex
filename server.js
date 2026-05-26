@@ -244,6 +244,38 @@ const NAVIGATOR_TOOLS = [
         input_schema: { type: 'object', properties: {} },
     },
     {
+        name: 'propose_calendar_event',
+        description: "PROPOSE a new Google Calendar event via Stella's action gateway. THIS DOES NOT CREATE THE EVENT DIRECTLY — it submits a proposal that goes into Farhad's approval queue (visible on /actions/confirmations or via Telegram). When the tool returns successfully, tell the user 'I've proposed [event] — needs your approval to go live' (not 'I've added it' or 'it's on your calendar'). All times in NZ ISO format (e.g. 2026-06-02T15:00:00+12:00).",
+        input_schema: {
+            type: 'object',
+            properties: {
+                title:       { type: 'string',  description: 'Event title (concise)' },
+                start_iso:   { type: 'string',  description: 'NZ-time ISO 8601 start, e.g. 2026-06-02T15:00:00+12:00' },
+                end_iso:     { type: 'string',  description: 'NZ-time ISO 8601 end' },
+                description: { type: 'string',  description: 'Optional event body' },
+                location:    { type: 'string',  description: 'Optional location string' },
+                attendees:   { type: 'array', items: { type: 'string' }, description: 'Optional attendee emails' },
+            },
+            required: ['title', 'start_iso', 'end_iso'],
+        },
+    },
+    {
+        name: 'propose_email_draft',
+        description: "PROPOSE an outbound email draft via Stella's action gateway. THIS DOES NOT SEND THE EMAIL — it submits a draft that goes into the email-approvals queue (visible via stella_pending_drafts). Tell the user 'I've drafted [subject] — sitting in your approval queue, sign off when ready' (not 'I sent it'). Use for replies, fee chasers, follow-ups, etc.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                to:      { type: 'array', items: { type: 'string' }, description: 'Recipient email addresses' },
+                cc:      { type: 'array', items: { type: 'string' } },
+                bcc:     { type: 'array', items: { type: 'string' } },
+                subject: { type: 'string' },
+                body:    { type: 'string', description: 'Email body — plain text or HTML' },
+                in_reply_to: { type: 'string', description: 'Optional: thread_id or message_id to reply to' },
+            },
+            required: ['to', 'subject', 'body'],
+        },
+    },
+    {
         name: 'search_vault',
         description: "Keyword-search the FULL vault index (every categorized note, not just the candidate slice). Use when the user mentions a project, person, address, or term that isn't in your candidate table — e.g. 'Papanui', 'Camelot Motel', 'McLane', 'Lowther'. Searches title + folder path. Returns top matches with idx (usable with read_note / open_note), id, cortex, relPath, daysOld.",
         input_schema: {
@@ -595,6 +627,97 @@ async function executeNavigatorTool(name, input, candidateLookup, allCandidates)
         const j = await stellaPost('/ops/proactive/run', {});
         if (j.error) return j;
         return { ok: true, scan: j };
+    }
+
+    // ── Action gateway — proposes go through Stella's confirmation queue ──
+    // /actions/propose logs the proposal in the audit chain but DOES NOT execute.
+    // Farhad must approve via the confirmation flow (Telegram / dashboard).
+    function actionIdempotencyKey(intent, payload) {
+        const crypto = require('crypto');
+        return 'cortex-' + intent + '-' + crypto
+            .createHash('sha256')
+            .update(JSON.stringify(payload))
+            .digest('hex').slice(0, 16);
+    }
+    async function proposeAction(agent_identity, intent, target, payload, risk_tier = 'standard') {
+        if (!STELLA_CONTROL_TOKEN && !STELLA_TOKEN) return { error: 'No Stella token — cannot propose actions' };
+        try {
+            const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 25000);
+            const r = await fetch(STELLA_URL + '/actions/propose', {
+                method: 'POST',
+                headers: {
+                    'x-stella-memory-token': STELLA_TOKEN || '',
+                    'x-stella-control-token': STELLA_CONTROL_TOKEN || '',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    agent: 'citadel-cortex',
+                    agent_identity,
+                    intent,
+                    target,
+                    risk_tier,
+                    requires_confirmation: true,
+                    reasoning_trace_ref: 'cortex/' + agent_identity + '/' + Date.now(),
+                    idempotency_key: actionIdempotencyKey(intent, payload),
+                    payload,
+                }),
+                signal: ac.signal,
+            });
+            clearTimeout(t);
+            if (!r.ok) return { error: '/actions/propose ' + r.status + ': ' + (await r.text()).slice(0, 240) };
+            return await r.json();
+        } catch (e) {
+            if (e.name === 'AbortError') return { error: '/actions/propose timed out (>25s)' };
+            return { error: e.message };
+        }
+    }
+
+    if (name === 'propose_calendar_event') {
+        const payload = {
+            title:       input.title,
+            start:       input.start_iso,
+            end:         input.end_iso,
+            description: input.description || '',
+            location:    input.location || '',
+            attendees:   input.attendees || [],
+            time_zone:   'Pacific/Auckland',
+        };
+        const j = await proposeAction('marius', 'calendar.event.create', 'google_calendar', payload, 'standard');
+        if (j.error) return j;
+        return {
+            ok:                true,
+            proposed:          true,
+            executed:          false,
+            note:              'EVENT IS PROPOSED, NOT ON CALENDAR. Awaiting Farhad approval.',
+            request_id:        j.request_id,
+            audit_entry_id:    j.audit_entry_id,
+            status:            j.status,
+            confirmation_id:   j.confirmation_id,
+            event:             { title: input.title, start: input.start_iso, end: input.end_iso },
+        };
+    }
+    if (name === 'propose_email_draft') {
+        const payload = {
+            to:          input.to,
+            cc:          input.cc || [],
+            bcc:         input.bcc || [],
+            subject:     input.subject,
+            body:        input.body,
+            in_reply_to: input.in_reply_to || null,
+        };
+        const j = await proposeAction('stella', 'email.draft.create', 'gmail', payload, 'standard');
+        if (j.error) return j;
+        return {
+            ok:               true,
+            proposed:         true,
+            sent:             false,
+            note:             'DRAFT IS QUEUED FOR APPROVAL — NOT SENT. Visible via stella_pending_drafts.',
+            request_id:       j.request_id,
+            audit_entry_id:   j.audit_entry_id,
+            status:           j.status,
+            confirmation_id:  j.confirmation_id,
+            draft:            { to: input.to, subject: input.subject },
+        };
     }
 
     if (name === 'write_note') {
@@ -1251,9 +1374,14 @@ http.createServer((req, res) => {
                 '  • Read CASSANDRA news intel.',
                 '  • Report Farhad\'s phone GPS location.',
                 '  • Trigger a proactive scan.',
+                'YOU CAN PROPOSE (logged in Stella\'s action gateway, awaits Farhad approval — DOES NOT EXECUTE):',
+                '  • propose_calendar_event — proposes a Google Calendar event. NOT created until Farhad approves.',
+                '  • propose_email_draft   — proposes an email draft. NOT sent until Farhad approves.',
+                'When you call these, your reply MUST say "I\'ve proposed X — needs your approval" (NOT "I\'ve added X" / "I\'ve sent X").',
+                '',
                 'NEITHER OF YOU CAN (yet — DO NOT PRETEND):',
-                '  • Write/create/modify/delete Google Calendar events.',
-                '  • Send emails (drafts pending approval is read-only from your side).',
+                '  • DIRECTLY write/create/modify/delete Google Calendar events (only propose).',
+                '  • DIRECTLY send emails (only propose drafts).',
                 '  • Search live web, flights, hotels, news outside CASSANDRA, booking sites.',
                 '  • Make phone calls, send SMS, send Telegram/WhatsApp.',
                 '  • Modify or "deploy" your own infrastructure.',
@@ -1326,6 +1454,13 @@ http.createServer((req, res) => {
                 '  📄 stella_fs_read(root_id, relative_path) — read a specific file Stella found',
                 '  📓 stella_notion(query)              — Notion search (NOTE: currently gated — Notion client not mounted; will return gated:true)',
                 '  📍 stella_location()                  — current phone GPS via sensorium',
+                '',
+                'ACTION GATEWAY (propose only — Farhad must approve before execution):',
+                '  🗓 propose_calendar_event(title, start_iso, end_iso, description?, location?, attendees?)',
+                '       — proposes a Google Calendar event in NZ time. Returns audit_entry_id. Tell user "proposed — needs your approval".',
+                '  ✉ propose_email_draft(to[], subject, body, cc?, bcc?, in_reply_to?)',
+                '       — proposes an email draft. Sits in stella_pending_drafts. Tell user "drafted — sign off when ready".',
+                '       NEVER claim "sent" or "added" — always "proposed" / "drafted".',
                 '',
                 'Candidate visible nodes (idx | cortex | days_old | title):',
                 table,
@@ -1418,6 +1553,8 @@ http.createServer((req, res) => {
                                 b.name === 'stella_fs_recent'    ? '⏱ Stella·FS recent ' + (result.count || 0) :
                                 b.name === 'stella_fs_read'      ? '📄 Stella·FS read' :
                                 b.name === 'stella_proactive_scan'? '⌁ Stella·Proactive scan' :
+                                b.name === 'propose_calendar_event'? '🗓 PROPOSED cal event (awaiting approval)' :
+                                b.name === 'propose_email_draft'   ? '✉ PROPOSED email draft (awaiting approval)' :
                                 b.name === 'write_note'         ? '✎ captured: ' + ((result.path || '').split('/').pop() || 'note') :
                                 b.name === 'propose_tour'       ? '⌃ ' + (b.input.nodes?.length || 0) + '-stop tour' :
                                 b.name === 'open_note'          ? '👁  open' :
