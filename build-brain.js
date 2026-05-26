@@ -2085,6 +2085,7 @@ function openChat() {
 function closeChat() {
     document.getElementById('chat').classList.remove('open');
     if (window.speechSynthesis) speechSynthesis.cancel();
+    if (typeof elevenAudio !== 'undefined' && elevenAudio) { try { elevenAudio.pause(); } catch (e) {} elevenAudio = null; }
     if (typeof stopListening === 'function') stopListening();
 }
 document.getElementById('chat-btn').addEventListener('click', openChat);
@@ -2097,86 +2098,111 @@ document.getElementById('chat-new').addEventListener('click', () => {
 document.getElementById('chat-form').addEventListener('submit', e => { e.preventDefault(); chatSubmit(); });
 
 // ════════════════════════════════════════════════════════════════════════════
-// VOICE — Speech Recognition (STT) + Speech Synthesis (TTS)
+// VOICE — MediaRecorder → Whisper (STT)  ·  ElevenLabs (TTS) with fallback
 // ════════════════════════════════════════════════════════════════════════════
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null;
+let mediaRecorder = null;
+let recordedChunks = [];
 let listening   = false;
 let autoSpeak   = localStorage.getItem('cortex-auto-speak') === '1';
+let elevenAudio = null;
+let voiceCaps   = { whisper: false, eleven: false };
+
+(async function detectVoiceCaps() {
+    try {
+        const m = await fetch('/api/manifest').then(r => r.json());
+        voiceCaps.whisper = !!m.hasWhisper;
+        voiceCaps.eleven  = !!m.hasEleven;
+    } catch (e) {}
+})();
 
 function setSpeakBtn() {
     const b = document.getElementById('chat-speak');
     if (!b) return;
     b.classList.toggle('on', autoSpeak);
     b.textContent = autoSpeak ? '🔊' : '🔇';
-    b.title = autoSpeak ? 'speaking on · click to mute' : 'muted · click to enable';
+    b.title = autoSpeak ? 'voice replies on · click to mute' : 'muted · click to enable';
 }
 setSpeakBtn();
 document.getElementById('chat-speak').addEventListener('click', () => {
     autoSpeak = !autoSpeak;
     localStorage.setItem('cortex-auto-speak', autoSpeak ? '1' : '0');
     setSpeakBtn();
-    if (!autoSpeak && window.speechSynthesis) speechSynthesis.cancel();
+    if (!autoSpeak) {
+        if (elevenAudio) { elevenAudio.pause(); elevenAudio = null; }
+        if (window.speechSynthesis) speechSynthesis.cancel();
+    }
 });
 
-function initVoice() {
-    if (!SR) return false;
-    if (recognition) return true;
-    recognition = new SR();
-    recognition.continuous     = false;
-    recognition.interimResults = true;
-    recognition.lang           = 'en-NZ';
-    recognition.onstart = () => {
-        listening = true;
-        document.getElementById('chat-mic').classList.add('listening');
-        document.getElementById('chat-input').classList.add('listening');
-        document.getElementById('chat-input').placeholder = 'listening…';
-        if (window.speechSynthesis) speechSynthesis.cancel();   // duck any current TTS
-    };
-    recognition.onresult = (e) => {
-        let final = '', interim = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-            const r = e.results[i];
-            if (r.isFinal) final += r[0].transcript;
-            else interim += r[0].transcript;
-        }
-        document.getElementById('chat-input').value = (final + interim).trim();
-    };
-    recognition.onerror = (e) => {
-        const t = e.error || 'mic error';
-        document.getElementById('chat-input').placeholder = '⚠ ' + t;
-    };
-    recognition.onend = () => {
-        listening = false;
-        document.getElementById('chat-mic').classList.remove('listening');
-        document.getElementById('chat-input').classList.remove('listening');
-        document.getElementById('chat-input').placeholder = 'ask, or hold mic · "tour recent litigation"';
-        const txt = document.getElementById('chat-input').value.trim();
-        if (txt) {
-            // user used voice → opt them in to TTS for the reply
-            if (!autoSpeak) { autoSpeak = true; localStorage.setItem('cortex-auto-speak','1'); setSpeakBtn(); }
-            chatSubmit();
-        }
-    };
-    return true;
-}
+async function startListening() {
+    const micBtn = document.getElementById('chat-mic');
+    const input  = document.getElementById('chat-input');
 
-function startListening() {
-    if (!initVoice()) {
-        document.getElementById('chat-input').placeholder = '⚠ voice not supported by this browser';
+    if (!navigator.mediaDevices?.getUserMedia) {
+        input.placeholder = '⚠ this browser has no microphone API';
         return;
     }
-    try { recognition.start(); } catch (e) {}
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true } });
+        // pick best supported mime
+        const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+        const mime  = mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
+        mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 64000 } : {});
+        recordedChunks = [];
+        mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.onstop = async () => {
+            stream.getTracks().forEach(t => t.stop());
+            listening = false;
+            micBtn.classList.remove('listening');
+            input.classList.remove('listening');
+            input.placeholder = 'transcribing…';
+            const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+            if (blob.size < 800) { input.placeholder = '(too short)'; return; }
+            try {
+                const r = await fetch('/api/transcribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': blob.type },
+                    body: blob,
+                });
+                if (!r.ok) {
+                    const j = await r.json().catch(() => ({}));
+                    input.placeholder = '⚠ ' + (j.error || 'whisper error');
+                    return;
+                }
+                const j = await r.json();
+                const text = (j.text || '').trim();
+                input.placeholder = 'ask, or hold mic · "tour recent litigation"';
+                if (text) {
+                    input.value = text;
+                    if (!autoSpeak) { autoSpeak = true; localStorage.setItem('cortex-auto-speak','1'); setSpeakBtn(); }
+                    chatSubmit();
+                }
+            } catch (e) {
+                input.placeholder = '⚠ ' + e.message;
+            }
+        };
+        mediaRecorder.start();
+        listening = true;
+        micBtn.classList.add('listening');
+        input.classList.add('listening');
+        input.placeholder = 'listening…';
+        // duck any playback
+        if (elevenAudio) { elevenAudio.pause(); elevenAudio = null; }
+        if (window.speechSynthesis) speechSynthesis.cancel();
+    } catch (e) {
+        document.getElementById('chat-input').placeholder = '⚠ mic blocked: ' + e.message;
+    }
 }
-function stopListening() { try { recognition && recognition.stop(); } catch (e) {} }
+
+function stopListening() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try { mediaRecorder.stop(); } catch (e) {}
+    }
+}
 
 const micBtn = document.getElementById('chat-mic');
 micBtn.addEventListener('click', () => listening ? stopListening() : startListening());
-// hold-to-talk on touch / long-press too
-micBtn.addEventListener('pointerdown', () => { if (!listening) startListening(); });
-micBtn.addEventListener('pointerup',   () => { if (listening) setTimeout(stopListening, 350); });
 
-// ── TTS ──────────────────────────────────────────────────────────────
+// ── TTS ───────────────────────────────────────────────────────────────────
 function stripForSpeech(s) {
     return String(s || '')
         .replace(/\\u0060[^\\u0060]*\\u0060/g, '')
@@ -2188,27 +2214,47 @@ function stripForSpeech(s) {
         .replace(/\\s+/g, ' ')
         .trim();
 }
-function speak(text) {
-    if (!autoSpeak || !window.speechSynthesis) return;
+
+async function speakEleven(text) {
+    try {
+        const r = await fetch('/api/speak', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        });
+        if (!r.ok) return false;
+        const blob = await r.blob();
+        if (elevenAudio) { elevenAudio.pause(); }
+        elevenAudio = new Audio(URL.createObjectURL(blob));
+        elevenAudio.play().catch(() => {});
+        return true;
+    } catch (e) { return false; }
+}
+
+function speakBrowser(text) {
+    if (!window.speechSynthesis) return;
     speechSynthesis.cancel();
-    const clean = stripForSpeech(text);
-    if (!clean) return;
-    const utter = new SpeechSynthesisUtterance(clean);
-    utter.lang  = 'en-NZ';
-    utter.rate  = 1.05;
-    utter.pitch = 1.0;
-    utter.volume = 1.0;
-    // pick a richer voice if available
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'en-NZ'; utter.rate = 1.05;
     const voices = speechSynthesis.getVoices();
-    const preferred =
-        voices.find(v => v.lang === 'en-NZ') ||
-        voices.find(v => /samantha|karen|kate|allison|moira|serena/i.test(v.name)) ||
-        voices.find(v => v.lang && v.lang.startsWith('en-')) ||
-        voices[0];
-    if (preferred) utter.voice = preferred;
+    const v = voices.find(v => v.lang === 'en-NZ') ||
+              voices.find(v => /samantha|karen|kate|allison|moira|serena/i.test(v.name || '')) ||
+              voices.find(v => v.lang && v.lang.startsWith('en-')) ||
+              voices[0];
+    if (v) utter.voice = v;
     speechSynthesis.speak(utter);
 }
-// some browsers populate voices async
+
+async function speak(text) {
+    if (!autoSpeak) return;
+    const clean = stripForSpeech(text);
+    if (!clean) return;
+    if (voiceCaps.eleven) {
+        const ok = await speakEleven(clean);
+        if (ok) return;
+    }
+    speakBrowser(clean);
+}
 if (window.speechSynthesis) speechSynthesis.onvoiceschanged = () => {};
 
 document.addEventListener('keydown', e => {
@@ -2292,7 +2338,10 @@ const defaults = {
     cLITIGATION:     true,
     cDESIGN:         true,
     cADMINISTRATION: true,
+    cRESEARCH:       true,
+    cPEOPLE:         true,
     cCONTACTS:       true,
+    cTASTE:          true,
     cARCHIVES:       true,
     cMISC:           true,
 };

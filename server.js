@@ -57,6 +57,26 @@ if (!ANTHROPIC_KEY) {
 const CHAT_MODEL = process.env.CHAT_MODEL || 'claude-sonnet-4-5';
 const CHAT_MAX_TURNS = parseInt(process.env.CHAT_MAX_TURNS || '6', 10);
 
+// ── OpenAI Whisper + ElevenLabs keys ────────────────────────────────────────
+let OPENAI_KEY     = process.env.OPENAI_API_KEY     || '';
+let ELEVEN_KEY     = process.env.ELEVENLABS_API_KEY || '';
+const ELEVEN_VOICE = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';  // 'Sarah' default
+if (!OPENAI_KEY || !ELEVEN_KEY) {
+    const home = require('os').homedir();
+    for (const f of [
+        path.join(home, 'Repo/Stella-Agent/.env.local'),
+        path.join(home, '.local/share/citadel-research-desk/.env'),
+        path.join(home, '.hermes/.env'),
+    ]) {
+        try {
+            const txt = fs.readFileSync(f, 'utf8');
+            if (!OPENAI_KEY) { const m = txt.match(/^OPENAI_API_KEY\s*=\s*(.+)$/m); if (m) OPENAI_KEY = m[1].trim().replace(/^["']|["']$/g,''); }
+            if (!ELEVEN_KEY) { const m = txt.match(/^ELEVENLABS_API_KEY\s*=\s*(.+)$/m); if (m) ELEVEN_KEY = m[1].trim().replace(/^["']|["']$/g,''); }
+            if (OPENAI_KEY && ELEVEN_KEY) break;
+        } catch (e) {}
+    }
+}
+
 // ── Tool definitions for the agentic navigator loop ────────────────────────
 const NAVIGATOR_TOOLS = [
     {
@@ -153,6 +173,10 @@ const PRICE = {
     'claude-3-5-sonnet':      { in: 3.0,  out: 15.0 },
     'claude-opus-4-5':        { in: 15.0, out: 75.0 },
     'claude-opus-4':          { in: 15.0, out: 75.0 },
+    // Whisper ~ $0.006/min — we log seconds-of-audio as 'in' (16kHz mono = 16000B/s)
+    'whisper-1':              { in: 0.006 * 1000000 / 60, out: 0 },   // turns seconds → ~$0.006/60
+    // ElevenLabs Turbo v2.5 ~ $0.10 / 1000 chars input
+    'elevenlabs-turbo-2.5':   { in: 100, out: 0 },                    // chars × 100/M = $/M
 };
 function priceFor(model) {
     if (PRICE[model]) return PRICE[model];
@@ -390,10 +414,99 @@ http.createServer((req, res) => {
             vault: VAULT_NAME, vaultPath: VAULT, hasAuth: AUTH_ON,
             hasChat: !!ANTHROPIC_KEY, chatModel: CHAT_MODEL,
             hasStella: !!STELLA_TOKEN, stellaUrl: STELLA_URL,
+            hasWhisper:  !!OPENAI_KEY,
+            hasEleven:   !!ELEVEN_KEY,
         });
     }
     if (url === '/api/usage') {
         return sendJSON(res, 200, aggregateUsage());
+    }
+
+    // ── /api/transcribe  (Whisper STT) ────────────────────────────────────
+    if (url === '/api/transcribe' && req.method === 'POST') {
+        if (!OPENAI_KEY) return sendJSON(res, 503, { error: 'OPENAI_API_KEY not set' });
+        // collect body — expect raw audio bytes (mime in content-type)
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', async () => {
+            const audio = Buffer.concat(chunks);
+            if (!audio.length) return sendJSON(res, 400, { error: 'empty body' });
+            const mime = req.headers['content-type'] || 'audio/webm';
+            const ext  = mime.includes('mp4')   ? 'mp4'
+                       : mime.includes('mpeg')  ? 'mp3'
+                       : mime.includes('wav')   ? 'wav'
+                       : mime.includes('ogg')   ? 'ogg'
+                       : 'webm';
+
+            // build multipart manually (no deps)
+            const boundary = '----cortex' + Date.now();
+            const head = Buffer.from(
+                '--' + boundary + '\r\n' +
+                'Content-Disposition: form-data; name="file"; filename="audio.' + ext + '"\r\n' +
+                'Content-Type: ' + mime + '\r\n\r\n'
+            );
+            const mid  = Buffer.from(
+                '\r\n--' + boundary + '\r\n' +
+                'Content-Disposition: form-data; name="model"\r\n\r\nwhisper-1'
+            );
+            const lang = Buffer.from(
+                '\r\n--' + boundary + '\r\n' +
+                'Content-Disposition: form-data; name="language"\r\n\r\nen'
+            );
+            const tail = Buffer.from('\r\n--' + boundary + '--\r\n');
+            const body = Buffer.concat([head, audio, mid, lang, tail]);
+
+            try {
+                const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + OPENAI_KEY,
+                        'Content-Type': 'multipart/form-data; boundary=' + boundary,
+                    },
+                    body,
+                });
+                if (!r.ok) return sendJSON(res, 502, { error: 'whisper ' + r.status + ': ' + (await r.text()).slice(0, 200) });
+                const j = await r.json();
+                // log usage approximate: $0.006 / minute, no token info — log only count
+                logUsage('whisper-1', { input_tokens: Math.round(audio.length / 16000), output_tokens: 0 }, 'transcribe');
+                sendJSON(res, 200, { text: j.text || '' });
+            } catch (e) { sendJSON(res, 500, { error: e.message }); }
+        });
+        return;
+    }
+
+    // ── /api/speak  (ElevenLabs TTS — returns audio/mpeg) ─────────────────
+    if (url === '/api/speak' && req.method === 'POST') {
+        if (!ELEVEN_KEY) return sendJSON(res, 503, { error: 'ELEVENLABS_API_KEY not set' });
+        let body = '';
+        req.on('data', c => body += c);
+        req.on('end', async () => {
+            let text;
+            try { text = JSON.parse(body).text; } catch { return sendJSON(res, 400, { error: 'bad json' }); }
+            if (!text) return sendJSON(res, 400, { error: 'no text' });
+            const voiceId = ELEVEN_VOICE;
+            try {
+                const r = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + voiceId + '?optimize_streaming_latency=2', {
+                    method: 'POST',
+                    headers: {
+                        'xi-api-key': ELEVEN_KEY,
+                        'Content-Type': 'application/json',
+                        'Accept': 'audio/mpeg',
+                    },
+                    body: JSON.stringify({
+                        text,
+                        model_id: 'eleven_turbo_v2_5',
+                        voice_settings: { stability: 0.55, similarity_boost: 0.85, style: 0.25, use_speaker_boost: true },
+                    }),
+                });
+                if (!r.ok) return sendJSON(res, 502, { error: 'elevenlabs ' + r.status + ': ' + (await r.text()).slice(0, 200) });
+                const audio = Buffer.from(await r.arrayBuffer());
+                logUsage('elevenlabs-turbo-2.5', { input_tokens: text.length, output_tokens: 0 }, 'speak');
+                res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' });
+                res.end(audio);
+            } catch (e) { sendJSON(res, 500, { error: e.message }); }
+        });
+        return;
     }
 
     // ── /api/taste-import — run an importer in background ──────────────────
