@@ -90,58 +90,99 @@ for (const [id, node] of nodes) {
     node.z += (Math.random() - 0.5) * 18;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 4. k-NN DENSIFICATION (cortical micro-columns)
-// ═══════════════════════════════════════════════════════════════════════════════
-console.log('🕸  k-NN cortical mesh…');
 const nodeArr = [...nodes.values()];
-const K_NN = 3;          // fewer local edges → less blob, more nebula
-const GRID = 90;
-const grid = new Map();
-const gkey = (x,y,z) => Math.floor(x/GRID)+','+Math.floor(y/GRID)+','+Math.floor(z/GRID);
-nodeArr.forEach((n,i) => { const k = gkey(n.x,n.y,n.z); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(i); });
-
-function nearestK(idx, k) {
-    const n = nodeArr[idx];
-    const cells = [];
-    for (let dx=-2;dx<=2;dx++) for (let dy=-2;dy<=2;dy++) for (let dz=-2;dz<=2;dz++) {
-        const ck = (Math.floor(n.x/GRID)+dx)+','+(Math.floor(n.y/GRID)+dy)+','+(Math.floor(n.z/GRID)+dz);
-        if (grid.has(ck)) cells.push(...grid.get(ck));
-    }
-    const cands = cells.filter(i => i !== idx).map(i => {
-        const m = nodeArr[i];
-        return [i, Math.hypot(m.x-n.x, m.y-n.y, m.z-n.z)];
-    });
-    cands.sort((a,b) => a[1]-b[1]);
-    return cands.slice(0, k);
-}
-
-for (let i = 0; i < nodeArr.length; i++) {
-    const nbrs = nearestK(i, K_NN);
-    for (const [j] of nbrs) addLink(nodeArr[i].id, nodeArr[j].id);
-}
-console.log(`   ${linkSet.size} after k-NN`);
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 5. LONG-RANGE AXONAL TRACTS (inter-cortex bridges)
+// 4. SAME-FOLDER EDGES — notes a curator put in the same directory are related
 // ═══════════════════════════════════════════════════════════════════════════════
-console.log('🌉 Long-range tracts…');
-const LONG_TARGET = 540;
-for (let i = 0; i < nodeArr.length; i++) {
-    if (Math.random() > 0.18) continue;
-    const n = nodeArr[i];
-    let best = -1, bestDelta = Infinity;
-    for (let t = 0; t < 25; t++) {
-        const j = Math.floor(Math.random() * nodeArr.length);
-        if (j === i) continue;
-        const m = nodeArr[j];
-        const d = Math.hypot(m.x-n.x, m.y-n.y, m.z-n.z);
-        const delta = Math.abs(d - LONG_TARGET);
-        if (delta < bestDelta) { bestDelta = delta; best = j; }
-    }
-    if (best !== -1 && bestDelta < 200) addLink(n.id, nodeArr[best].id);
+console.log('📁  Same-folder edges…');
+const byFolder = new Map();
+for (const n of nodeArr) {
+    const folder = (n.relPath || '').split('/').slice(0, -1).join('/');
+    if (!folder) continue;
+    if (!byFolder.has(folder)) byFolder.set(folder, []);
+    byFolder.get(folder).push(n.id);
 }
-console.log(`   ${linkSet.size} after tracts`);
+let fEdges = 0;
+for (const [folder, members] of byFolder) {
+    if (members.length < 2 || members.length > 40) continue;     // skip giant index-style folders
+    // pick a folder anchor (most-linked member, else first)
+    let anchor = members[0];
+    let anchorDeg = degree.get(anchor) || 0;
+    for (const m of members) { const d = degree.get(m) || 0; if (d > anchorDeg) { anchor = m; anchorDeg = d; } }
+    // connect every member to anchor (star within folder) + each pair-up if folder is small
+    for (const m of members) {
+        if (m !== anchor) { const before = linkSet.size; addLink(m, anchor); if (linkSet.size > before) fEdges++; }
+    }
+    if (members.length <= 6) {
+        // also connect non-anchor members to one more sibling (tight cluster)
+        for (let i = 0; i < members.length; i++) {
+            const a = members[i], b = members[(i+1) % members.length];
+            if (a !== b) { const before = linkSet.size; addLink(a, b); if (linkSet.size > before) fEdges++; }
+        }
+    }
+}
+console.log(`   ${fEdges} folder edges  (${linkSet.size} total)`);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. TITLE-KEYWORD EDGES — notes whose titles share ≥2 significant tokens
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('🔤  Title-keyword overlap…');
+const STOP = new Set([
+    'the','a','an','of','and','to','for','in','on','at','with','by','from','as','is','it','this','that',
+    'project','overview','register','note','draft','update','log','status','main','citadel','file',
+    'limited','capital','company','ltd','inc','co','-','&','|','—','rev','v1','v2','v3','part','one','two',
+]);
+const kw = new Map();
+for (const n of nodeArr) {
+    const tokens = n.id.toLowerCase()
+        .replace(/[^\w\s-]/g, ' ')
+        .split(/[\s\-_/]+/)
+        .filter(w => w.length >= 4 && !STOP.has(w) && !/^\d+$/.test(w));
+    kw.set(n.id, new Set(tokens));
+}
+let kEdges = 0;
+const arr = [...nodeArr];
+for (let i = 0; i < arr.length; i++) {
+    const ka = kw.get(arr[i].id);
+    if (ka.size === 0) continue;
+    let added = 0;
+    for (let j = i + 1; j < arr.length && added < 6; j++) {     // cap edges per node
+        const kb = kw.get(arr[j].id);
+        let shared = 0;
+        for (const w of ka) if (kb.has(w)) shared++;
+        if (shared >= 2) {
+            const before = linkSet.size;
+            addLink(arr[i].id, arr[j].id);
+            if (linkSet.size > before) { kEdges++; added++; }
+        }
+    }
+}
+console.log(`   ${kEdges} keyword edges  (${linkSet.size} total)`);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6. CATEGORY-HUB EDGES — every isolated node hooks to its cortex's biggest hub
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('🎯  Category hub-spoke…');
+degree.clear();
+for (const k of linkSet) { const [a,b] = k.split('\x00'); degree.set(a,(degree.get(a)||0)+1); degree.set(b,(degree.get(b)||0)+1); }
+const catHubs = {};
+for (const cat of CATEGORIES) {
+    const members = nodeArr.filter(n => n.category === cat);
+    if (members.length < 2) continue;
+    members.sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0));
+    catHubs[cat] = members.slice(0, 3).map(n => n.id);   // top 3 hubs
+}
+let hEdges = 0;
+for (const n of nodeArr) {
+    const hubs = catHubs[n.category] || [];
+    const d = degree.get(n.id) || 0;
+    if (d >= 2) continue;                                  // already connected enough
+    for (const h of hubs.slice(0, d === 0 ? 2 : 1)) {       // orphans get 2 anchors, weak nodes get 1
+        if (h !== n.id) { const before = linkSet.size; addLink(n.id, h); if (linkSet.size > before) hEdges++; }
+    }
+}
+console.log(`   ${hEdges} hub edges  (${linkSet.size} total)`);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 6. CONNECT ANY REMAINING ORPHANS
@@ -1350,6 +1391,64 @@ const presets = {
 const fPre = gui.addFolder('Presets');
 for (const [name, vals] of Object.entries(presets)) {
     fPre.add({ go: () => { Object.assign(params, vals); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'go').name(name);
+}
+
+// ── VAULT SYNC folder ────────────────────────────────────────
+const fSync = gui.addFolder('Vault Sync');
+fSync.add({ rebuild: () => runRebuild(false) }, 'rebuild').name('🔄  rebuild from cache (~2s)');
+fSync.add({ rescan:  () => runRebuild(true)  }, 'rescan').name('↻  full re-scan vault (~30s)');
+
+async function runRebuild(fullScan) {
+    if (document.getElementById('rb-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'rb-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,5,15,.78);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);pointer-events:auto';
+    modal.innerHTML =
+      '<div style="background:rgba(5,12,22,.97);border:1px solid rgba(140,200,230,.4);padding:32px 42px;min-width:360px;text-align:center;border-radius:4px;font-family:Courier New,monospace">' +
+      '<div style="font-size:14px;letter-spacing:5px;color:#7affc4;text-shadow:0 0 14px rgba(122,255,196,.5)">◆ ' + (fullScan ? 'FULL SYNC' : 'REBUILD') + '</div>' +
+      '<div id="rb-stage" style="font-size:10px;margin-top:14px;color:#8ee0ff;letter-spacing:3px">starting…</div>' +
+      '<div style="width:280px;height:4px;background:rgba(140,200,230,.15);margin:18px auto;border-radius:2px;overflow:hidden">' +
+        '<div id="rb-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#7affc4,#8ee0ff);transition:width .25s"></div>' +
+      '</div>' +
+      '<div id="rb-pct" style="color:#fff;font-size:18px;letter-spacing:2px">0%</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+
+    try {
+        const r0 = await fetch('/api/rebuild' + (fullScan ? '?scan=true' : ''));
+        if (!r0.ok && r0.status !== 202) {
+            const j = await r0.json().catch(() => ({}));
+            throw new Error(j.error || ('HTTP ' + r0.status));
+        }
+        const poll = setInterval(async () => {
+            try {
+                const j = await fetch('/api/rebuild-status').then(r => r.json());
+                document.getElementById('rb-stage').textContent = (j.stage || '…').toUpperCase();
+                document.getElementById('rb-pct').textContent   = (j.percent || 0) + '%';
+                document.getElementById('rb-bar').style.width   = (j.percent || 0) + '%';
+                if (j.done) {
+                    clearInterval(poll);
+                    if (j.error) {
+                        document.getElementById('rb-stage').textContent = '⚠ FAILED';
+                        document.getElementById('rb-stage').style.color = '#ff7a99';
+                        document.getElementById('rb-pct').textContent   = j.error.slice(0, 60);
+                        setTimeout(() => modal.remove(), 4500);
+                    } else {
+                        document.getElementById('rb-stage').textContent = '◆ COMPLETE — reloading';
+                        document.getElementById('rb-stage').style.color = '#7affc4';
+                        setTimeout(() => location.reload(), 700);
+                    }
+                }
+            } catch(e) {
+                clearInterval(poll);
+                document.getElementById('rb-stage').textContent = '⚠ ' + e.message;
+                setTimeout(() => modal.remove(), 4000);
+            }
+        }, 600);
+    } catch(e) {
+        document.getElementById('rb-stage').textContent = '⚠ ' + e.message;
+        setTimeout(() => modal.remove(), 4000);
+    }
 }
 
 // ── reset to defaults ────────────────────────────────────────

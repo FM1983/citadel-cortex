@@ -21,7 +21,7 @@
 const http  = require('http');
 const fs    = require('fs');
 const path  = require('path');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 
 let VAULT;
 try { ({ VAULT } = require('./config')); } catch (e) {
@@ -35,6 +35,8 @@ const ROOT = __dirname;
 const AUTH_USER = process.env.AUTH_USER || '';
 const AUTH_PASS = process.env.AUTH_PASS || '';
 const AUTH_ON   = AUTH_USER && AUTH_PASS;
+
+let rebuildJob = null;
 
 const MIME = {
     '.html':'text/html; charset=utf-8', '.js':'application/javascript',
@@ -110,6 +112,44 @@ http.createServer((req, res) => {
         res.end();
         return;
     }
+
+    // ── /api/rebuild — kick off pipeline (async, polled via status) ─────────
+    if (url === '/api/rebuild') {
+        if (rebuildJob && !rebuildJob.done) return sendJSON(res, 409, { error: 'job already running', job: rebuildJob });
+        const fullScan = qs.get('scan') === 'true';
+        rebuildJob = { stage: 'starting', percent: 0, log: [], done: false, error: null, started: Date.now() };
+
+        const env = { ...process.env, CITADEL_VAULT: VAULT };
+        const steps = fullScan
+            ? [['scan-vault.js','scanning'], ['categorize-vault.js','categorizing'], ['build-brain.js','building']]
+            : [['categorize-vault.js','categorizing'], ['build-brain.js','building']];
+
+        let step = 0;
+        function runNext() {
+            if (step >= steps.length) { rebuildJob.done = true; rebuildJob.stage = 'done'; rebuildJob.percent = 100; rebuildJob.took = Date.now() - rebuildJob.started; return; }
+            const [script, stage] = steps[step];
+            rebuildJob.stage = stage;
+            rebuildJob.percent = Math.round(step / steps.length * 100);
+            const p = spawn('node', [script], { cwd: __dirname, env });
+            p.stdout.on('data', d => {
+                const s = d.toString();
+                rebuildJob.log.push(s);
+                const m = s.match(/(\d+)\/(\d+)/);
+                if (m) {
+                    const inner = +m[1] / +m[2];
+                    rebuildJob.percent = Math.round((step + inner) / steps.length * 100);
+                }
+            });
+            p.stderr.on('data', d => rebuildJob.log.push(d.toString()));
+            p.on('exit', code => {
+                if (code !== 0) { rebuildJob.error = `${script} exited ${code}`; rebuildJob.done = true; return; }
+                step++; runNext();
+            });
+        }
+        runNext();
+        return sendJSON(res, 202, { ok: true, fullScan });
+    }
+    if (url === '/api/rebuild-status') return sendJSON(res, 200, rebuildJob || { idle: true });
 
     // ── static ───────────────────────────────────────────────────────────────
     if (url === '/') url = '/neural-graph.html';
