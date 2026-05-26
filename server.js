@@ -54,7 +54,9 @@ if (!ANTHROPIC_KEY) {
         } catch (e) {}
     }
 }
-const CHAT_MODEL = process.env.CHAT_MODEL || 'claude-sonnet-4-5';
+// Default Haiku for snappy live-mode turns. Override with CHAT_MODEL=claude-sonnet-4-5
+// for deeper reasoning on heavy queries.
+const CHAT_MODEL = process.env.CHAT_MODEL || 'claude-haiku-4-5';
 const CHAT_MAX_TURNS = parseInt(process.env.CHAT_MAX_TURNS || '6', 10);
 
 // ── OpenAI Whisper + ElevenLabs keys ────────────────────────────────────────

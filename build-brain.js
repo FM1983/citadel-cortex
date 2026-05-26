@@ -2467,13 +2467,32 @@ function rmsFromAnalyser() {
 
 async function liveLoop() {
     while (liveMode && !liveCancel) {
-        // wait if TTS is currently playing
+        // wait if TTS is currently playing — but watch for barge-in
+        // mic stays hot via liveAnalyser; sustained speech cancels Marius.
+        let bargeFrames = 0;
+        const BARGE_THR    = 0.055;   // higher than normal SPEAK_THR (TTS leak immunity)
+        const BARGE_FRAMES = 4;       // ~320ms of sustained speech to interrupt
         while (liveSpeakingFlag && !liveCancel) {
-            setLiveStatus('speaking…', 'speak');
-            await new Promise(r => setTimeout(r, 150));
+            setLiveStatus('speaking — interrupt anytime', 'speak');
+            const rms = rmsFromAnalyser();
+            if (rms > BARGE_THR) {
+                bargeFrames++;
+                if (bargeFrames >= BARGE_FRAMES) {
+                    // INTERRUPT — kill Marius, fall through to recording
+                    try { if (elevenAudio) { elevenAudio.pause(); elevenAudio.currentTime = elevenAudio.duration || 0; } } catch (e) {}
+                    elevenAudio = null;
+                    if (window.speechSynthesis) speechSynthesis.cancel();
+                    liveSpeakingFlag = false;
+                    setLiveStatus('listening (you cut in)', 'listen');
+                    break;
+                }
+            } else {
+                bargeFrames = Math.max(0, bargeFrames - 1);
+            }
+            await new Promise(r => setTimeout(r, 80));
         }
         if (liveCancel || !liveMode) break;
-        setLiveStatus('listening…', 'listen');
+        if (!liveSpeakingFlag) setLiveStatus('listening…', 'listen');
 
         // start a fresh recorder for this utterance
         const mime = bestMime();
