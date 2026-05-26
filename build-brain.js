@@ -449,6 +449,23 @@ canvas{display:block;width:100%!important;height:100%!important}
 #dash section li:hover{background:rgba(140,200,230,.12)}
 #dash .dn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #dash .dx{font-size:9px;color:#7affc4;flex-shrink:0;opacity:.85;letter-spacing:1px}
+/* ── usage subsection ── */
+.us-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px}
+.us-stat{background:rgba(122,255,196,.05);border:1px solid rgba(122,255,196,.18);padding:10px 12px;border-radius:3px}
+.us-lab{font-size:8.5px;letter-spacing:3px;color:#8ee0ff;margin-bottom:4px}
+.us-val{font-size:16px;font-weight:bold;color:#7affc4;text-shadow:0 0 10px rgba(122,255,196,.3);font-family:'Courier New',monospace}
+.us-sub{font-size:9px;color:rgba(180,220,250,.6);margin-top:3px;letter-spacing:1px}
+.us-chart-wrap{margin:8px 0 14px}
+.us-chart{display:flex;align-items:flex-end;gap:3px;height:42px;background:rgba(0,0,0,.2);padding:4px 6px;border-radius:2px;border:1px solid rgba(140,200,230,.1)}
+.us-bar{flex:1;background:linear-gradient(180deg,#7affc4,#8ee0ff);min-height:1px;border-radius:1px;opacity:.85;transition:opacity .12s}
+.us-bar:hover{opacity:1;background:linear-gradient(180deg,#fff,#7affc4)}
+.us-chart-days{display:flex;justify-content:space-between;font-size:8px;letter-spacing:1px;color:rgba(140,200,230,.45);margin-top:4px;padding:0 6px}
+.us-chart-days span{flex:1;text-align:center}
+.us-models{margin-top:8px}
+.us-mrow{display:flex;font-size:10px;padding:3px 0;border-bottom:1px solid rgba(140,200,230,.06);letter-spacing:.5px}
+.us-mname{flex:1;color:#cdf}
+.us-mcalls{color:rgba(180,220,250,.6);width:90px}
+.us-mcost{color:#7affc4;width:90px;text-align:right;font-weight:bold}
 
 #fire-btn{position:fixed;bottom:80px;right:18px;background:rgba(238,156,230,.15);border:1px solid rgba(238,156,230,.6);color:#ee9ce6;font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;z-index:30;pointer-events:auto;text-shadow:0 0 8px rgba(238,156,230,.7);transition:all .15s;border-radius:2px}
 #dash-btn{position:fixed;bottom:80px;right:155px;background:rgba(122,255,196,.13);border:1px solid rgba(122,255,196,.5);color:#7affc4;font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;z-index:30;pointer-events:auto;text-shadow:0 0 8px rgba(122,255,196,.6);transition:all .15s;border-radius:2px}
@@ -564,6 +581,7 @@ canvas{display:block;width:100%!important;height:100%!important}
     <div class="st">FOCUS    <span id="sf" style="color:#f0f">—</span></div>
     <div class="st">FPS      <span id="fp" style="color:#0f9">—</span></div>
     <div class="st">STELLA   <span id="stella-status" style="color:#888">…</span></div>
+    <div class="st">SPEND $  <span id="spend-today" style="color:#7affc4" title="today / month total">0.00</span></div>
   </div>
   <div id="sw"><input id="si" type="text" placeholder="SEARCH NEURON…" autocomplete="off"></div>
   <div class="panel" id="tr">
@@ -1316,6 +1334,20 @@ fetch('/api/manifest').then(r => r.json()).then(m => {
     }).catch(() => { el.textContent = 'err'; el.style.color = '#ff7a99'; });
 }).catch(()=>{});
 
+function refreshSpend() {
+    fetch('/api/usage').then(r => r.json()).then(u => {
+        const el = document.getElementById('spend-today');
+        if (!el) return;
+        el.textContent = (u.day?.cost || 0).toFixed(4);
+        el.title = 'today: $' + (u.day?.cost || 0).toFixed(4) +
+                   ' · 30d: $' + (u.month?.cost || 0).toFixed(4) +
+                   ' · all: $' + (u.all?.cost || 0).toFixed(4) +
+                   ' (' + (u.all?.calls || 0) + ' calls)';
+    }).catch(()=>{});
+}
+refreshSpend();
+setInterval(refreshSpend, 30000);   // every 30s
+
 const npLobeColors = {};   // for category accent on panel
 for (const k of Object.keys(DATA.lobes)) npLobeColors[k] = DATA.lobes[k].color;
 
@@ -1536,13 +1568,17 @@ function clearSelection() {
 
 // ── panel buttons ─────────────────────────────────────────────────────
 // ── DASHBOARD ─────────────────────────────────────────────────────────
-function openDashboard() {
+async function openDashboard() {
     const grid = document.getElementById('dash-grid');
     const rows = (title, items, badge) =>
         '<section><h3>' + title + '</h3><ol>' +
         items.map(([idx, label, sub]) =>
             '<li data-idx="' + idx + '"><span class="dn">' + label + '</span><span class="dx">' + (sub || '') + '</span></li>'
         ).join('') + '</ol></section>';
+
+    // ── fetch usage stats in parallel ──
+    let usage = null;
+    try { usage = await fetch('/api/usage').then(r => r.json()); } catch(e) {}
 
     // Top hubs (by total degree)
     const allIdx = DATA.ids.map((_, i) => i);
@@ -1564,6 +1600,36 @@ function openDashboard() {
     for (const c of DATA.categories) catCounts[c] = 0;
     for (const c of DATA.cats) catCounts[c] = (catCounts[c] || 0) + 1;
 
+    // ── usage block (full-width across grid) ───────────────────────────
+    let usageBlock = '';
+    if (usage) {
+        const u = usage;
+        const $ = (n) => '$' + (n || 0).toFixed(4);
+        const fmt = (n) => (n || 0).toLocaleString();
+        const maxBar = Math.max(...u.timeline.map(d => d.cost), 0.001);
+        const bars = u.timeline.map(d => {
+            const h = (d.cost / maxBar) * 100;
+            return '<div class="us-bar" style="height:' + h + '%" title="' + d.day + ' · $' + d.cost.toFixed(4) + ' · ' + d.calls + ' calls"></div>';
+        }).join('');
+        const days = u.timeline.map(d => '<span>' + d.day.split('-')[1] + '</span>').join('');
+        const modelRows = Object.entries(u.byModel).sort((a,b)=>b[1].cost-a[1].cost).map(([m, s]) =>
+            '<div class="us-mrow"><span class="us-mname">' + m.replace(/-\\d+$/, '').replace(/^claude-/, '') + '</span>' +
+            '<span class="us-mcalls">' + s.calls + ' calls</span><span class="us-mcost">' + $(s.cost) + '</span></div>'
+        ).join('');
+        usageBlock =
+            '<section style="grid-column:1 / -1;border-top:1px solid rgba(122,255,196,.18);padding-top:14px;margin-top:6px">' +
+            '<h3 style="display:flex;justify-content:space-between"><span>◐  API Usage</span><span style="color:#7affc4">' + $(u.day.cost) + ' today · ' + $(u.all.cost) + ' total</span></h3>' +
+            '<div class="us-grid">' +
+              '<div class="us-stat"><div class="us-lab">TODAY</div><div class="us-val">' + $(u.day.cost) + '</div><div class="us-sub">' + u.day.calls + ' calls · ' + fmt(u.day.in + u.day.out) + ' tok</div></div>' +
+              '<div class="us-stat"><div class="us-lab">7 DAYS</div><div class="us-val">' + $(u.week.cost) + '</div><div class="us-sub">' + u.week.calls + ' calls · ' + fmt(u.week.in + u.week.out) + ' tok</div></div>' +
+              '<div class="us-stat"><div class="us-lab">30 DAYS</div><div class="us-val">' + $(u.month.cost) + '</div><div class="us-sub">' + u.month.calls + ' calls · ' + fmt(u.month.in + u.month.out) + ' tok</div></div>' +
+              '<div class="us-stat"><div class="us-lab">ALL TIME</div><div class="us-val">' + $(u.all.cost) + '</div><div class="us-sub">' + u.all.calls + ' calls · ' + fmt(u.all.in + u.all.out) + ' tok</div></div>' +
+            '</div>' +
+            '<div class="us-chart-wrap"><div class="us-chart">' + bars + '</div><div class="us-chart-days">' + days + '</div></div>' +
+            (modelRows ? '<div class="us-models"><div class="us-lab" style="margin-bottom:6px">BY MODEL</div>' + modelRows + '</div>' : '') +
+            '</section>';
+    }
+
     grid.innerHTML =
         rows('▲  Top Hubs', topHubs) +
         rows('●  Recently Modified', recentList) +
@@ -1571,7 +1637,8 @@ function openDashboard() {
         '<section><h3>◇  Cortexes</h3><ol>' +
             DATA.categories.map(c =>
                 '<li data-cat="' + c + '"><span class="dn" style="color:' + (DATA.lobes[c]?.color || '#cdf') + '">' + c + '</span><span class="dx">' + (catCounts[c] || 0) + '</span></li>'
-            ).join('') + '</ol></section>';
+            ).join('') + '</ol></section>' +
+        usageBlock;
 
     grid.querySelectorAll('li[data-idx]').forEach(li => {
         li.addEventListener('click', () => {
@@ -1921,6 +1988,7 @@ async function chatSubmit(autoText) {
         chatHistory.push({ kind: 'error', text: e.message });
     }
     chatRender();
+    refreshSpend();
 }
 
 // ── Tour player ───────────────────────────────────────────────────────

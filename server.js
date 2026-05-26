@@ -141,6 +141,111 @@ async function executeNavigatorTool(name, input, candidateLookup) {
     return { error: 'unknown tool ' + name };
 }
 
+// ── Usage tracking — every Anthropic call appends a JSONL record ───────────
+// Pricing tables in USD per million tokens. Override via env if needed.
+const PRICE = {
+    // model            input    output
+    'claude-haiku-4-5':       { in: 1.0,  out: 5.0  },
+    'claude-haiku-4':         { in: 1.0,  out: 5.0  },
+    'claude-3-5-haiku':       { in: 0.8,  out: 4.0  },
+    'claude-sonnet-4-5':      { in: 3.0,  out: 15.0 },
+    'claude-sonnet-4':        { in: 3.0,  out: 15.0 },
+    'claude-3-5-sonnet':      { in: 3.0,  out: 15.0 },
+    'claude-opus-4-5':        { in: 15.0, out: 75.0 },
+    'claude-opus-4':          { in: 15.0, out: 75.0 },
+};
+function priceFor(model) {
+    if (PRICE[model]) return PRICE[model];
+    // best-effort prefix match
+    const k = Object.keys(PRICE).find(p => model.startsWith(p));
+    return PRICE[k] || { in: 3.0, out: 15.0 };
+}
+function computeCost(model, usage) {
+    const p = priceFor(model);
+    const inT  = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+    const outT = usage.output_tokens || 0;
+    // cache reads charged at 10% of input rate
+    const cacheReadT = usage.cache_read_input_tokens || 0;
+    return ((inT * p.in) + (outT * p.out) + (cacheReadT * p.in * 0.1)) / 1_000_000;
+}
+
+const USAGE_LOG = path.join(__dirname, 'usage.jsonl');
+function logUsage(model, usage, reqLabel) {
+    const cost = computeCost(model, usage);
+    const rec = {
+        t:    Date.now(),
+        m:    model,
+        in:   usage.input_tokens || 0,
+        out:  usage.output_tokens || 0,
+        cIn:  usage.cache_creation_input_tokens || 0,
+        cRd:  usage.cache_read_input_tokens || 0,
+        cost: +cost.toFixed(6),
+        req:  reqLabel || 'chat',
+    };
+    try { fs.appendFileSync(USAGE_LOG, JSON.stringify(rec) + '\n'); } catch (e) {}
+    return rec;
+}
+
+function readUsage() {
+    if (!fs.existsSync(USAGE_LOG)) return [];
+    try {
+        return fs.readFileSync(USAGE_LOG, 'utf8').split('\n').filter(Boolean).map(l => {
+            try { return JSON.parse(l); } catch { return null; }
+        }).filter(Boolean);
+    } catch { return []; }
+}
+
+function aggregateUsage() {
+    const records = readUsage();
+    const now = Date.now();
+    const DAY = 86400000;
+
+    const dayMs   = now - DAY;
+    const weekMs  = now - 7 * DAY;
+    const monthMs = now - 30 * DAY;
+
+    const blank = () => ({ calls: 0, in: 0, out: 0, cost: 0 });
+    const acc = { day: blank(), week: blank(), month: blank(), all: blank() };
+    const byModel = {};
+    const byDay   = {};   // 'YYYY-MM-DD' → blank
+
+    for (const r of records) {
+        const inT  = (r.in || 0) + (r.cIn || 0);
+        const outT = r.out || 0;
+        const c    = r.cost || 0;
+
+        const apply = (b) => { b.calls++; b.in += inT; b.out += outT; b.cost += c; };
+
+        apply(acc.all);
+        if (r.t >= monthMs) apply(acc.month);
+        if (r.t >= weekMs)  apply(acc.week);
+        if (r.t >= dayMs)   apply(acc.day);
+
+        byModel[r.m] = byModel[r.m] || blank();
+        apply(byModel[r.m]);
+
+        const d = new Date(r.t);
+        const dayKey = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        byDay[dayKey] = byDay[dayKey] || blank();
+        apply(byDay[dayKey]);
+    }
+
+    // last 14 days timeline
+    const timeline = [];
+    for (let i = 13; i >= 0; i--) {
+        const d = new Date(now - i * DAY);
+        const k = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        const b = byDay[k] || blank();
+        timeline.push({ day: k.slice(5), cost: +b.cost.toFixed(4), calls: b.calls });
+    }
+
+    // round costs in summaries
+    for (const k of ['day','week','month','all']) acc[k].cost = +acc[k].cost.toFixed(4);
+    for (const m of Object.keys(byModel)) byModel[m].cost = +byModel[m].cost.toFixed(4);
+
+    return { ...acc, byModel, timeline, total: records.length };
+}
+
 async function callAnthropic(messages, system) {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -161,7 +266,9 @@ async function callAnthropic(messages, system) {
         const errTxt = await r.text();
         throw new Error('Anthropic ' + r.status + ': ' + errTxt.slice(0, 300));
     }
-    return await r.json();
+    const j = await r.json();
+    if (j.usage) logUsage(j.model || CHAT_MODEL, j.usage, 'chat');
+    return j;
 }
 
 // ── STELLA-AGENT integration (read-only memory + brain search) ─────────────
@@ -284,6 +391,9 @@ http.createServer((req, res) => {
             hasChat: !!ANTHROPIC_KEY, chatModel: CHAT_MODEL,
             hasStella: !!STELLA_TOKEN, stellaUrl: STELLA_URL,
         });
+    }
+    if (url === '/api/usage') {
+        return sendJSON(res, 200, aggregateUsage());
     }
     if (url === '/api/stella-ping') {
         if (!STELLA_TOKEN) return sendJSON(res, 503, { reachable: false, error: 'no token configured' });

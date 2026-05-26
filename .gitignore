@@ -2,6 +2,7 @@
 neural-graph.html
 vault-cache.json
 vault-categorized.json
+usage.jsonl
 *.bak
 
 # OS
