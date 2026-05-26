@@ -244,6 +244,7 @@ topHubs.forEach((h,i)=>console.log(`   ${i+1}. ${h.id} (${h.deg} synapses · ${h
 // ═══════════════════════════════════════════════════════════════════════════════
 const packed = {
     ids:        nodeArr.map(n => n.id),
+    paths:      nodeArr.map(n => n.relPath || ''),       // for /api/note + Obsidian deep-link
     cats:       nodeArr.map(n => n.category),
     groups:     nodeArr.map(n => n.group),
     sizes:      nodeArr.map(n => n.size),
@@ -297,6 +298,54 @@ canvas{display:block;width:100%!important;height:100%!important}
 #vig{position:fixed;inset:0;background:radial-gradient(ellipse at center,transparent 38%,rgba(0,0,16,.85) 100%);pointer-events:none;z-index:14}
 #loading{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#0ff;font-size:15px;letter-spacing:5px;text-shadow:0 0 20px #0ff;z-index:100;text-align:center}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}.blink{animation:blink 1.2s infinite}
+/* ── NOTE SIDE PANEL ──────────────────────────────────────── */
+#note-panel{position:fixed;top:0;left:0;width:420px;max-width:90vw;height:100%;background:rgba(5,10,20,.92);
+  border-right:1px solid rgba(140,200,230,.18);backdrop-filter:blur(14px);
+  transform:translateX(-110%);transition:transform .35s cubic-bezier(.2,.7,.2,1);z-index:60;
+  display:flex;flex-direction:column;pointer-events:auto;color:#cdf;font-family:'Courier New',monospace}
+#note-panel.open{transform:translateX(0)}
+#note-panel header{padding:18px 20px 14px;border-bottom:1px solid rgba(140,200,230,.14);position:relative}
+#note-panel h2{font-size:14px;font-weight:bold;color:#fff;text-shadow:0 0 14px rgba(140,200,230,.5);
+  word-break:break-word;padding-right:28px;letter-spacing:.5px;margin-bottom:10px;line-height:1.4}
+#note-panel .np-meta{font-size:9px;letter-spacing:2px;color:rgba(160,220,200,.7);line-height:1.9}
+#note-panel .np-cat{display:inline-block;padding:2px 8px;border-radius:2px;font-weight:bold;letter-spacing:1.5px}
+#note-panel .np-actions{display:flex;gap:8px;margin-top:14px}
+#note-panel .np-actions button{flex:1;background:rgba(140,200,230,.08);border:1px solid rgba(140,200,230,.3);
+  color:#cdf;font-family:'Courier New',monospace;font-size:10px;letter-spacing:1.5px;padding:7px 8px;cursor:pointer;
+  border-radius:2px;transition:all .15s}
+#note-panel .np-actions button:hover{background:rgba(140,200,230,.22);border-color:rgba(140,200,230,.6)}
+#note-panel .np-actions button.primary{background:rgba(122,255,196,.12);border-color:rgba(122,255,196,.5);color:#7affc4}
+#note-panel .np-actions button.primary:hover{background:rgba(122,255,196,.25)}
+#np-close{position:absolute;top:14px;right:16px;background:none;border:none;color:#ee9ce6;font-size:18px;cursor:pointer;
+  padding:4px 8px;line-height:1}
+#np-close:hover{color:#fff;text-shadow:0 0 10px #ee9ce6}
+#np-content{flex:1;overflow-y:auto;padding:18px 24px 24px;font-size:12px;line-height:1.65;color:rgba(220,235,250,.9)}
+#np-content h1,#np-content h2,#np-content h3{color:#7affc4;margin:18px 0 10px;letter-spacing:.5px}
+#np-content h1{font-size:16px} #np-content h2{font-size:14px} #np-content h3{font-size:13px}
+#np-content code{background:rgba(140,200,230,.1);padding:2px 5px;border-radius:2px;font-size:11px;color:#ffd28a}
+#np-content pre{background:rgba(0,0,0,.4);padding:10px;border-radius:3px;overflow-x:auto;font-size:10px;border-left:2px solid #7affc4}
+#np-content a{color:#8ee0ff;text-decoration:none;border-bottom:1px dotted rgba(140,200,230,.5)}
+#np-content a:hover{color:#fff}
+#np-content blockquote{border-left:2px solid rgba(238,156,230,.5);padding-left:12px;margin:10px 0;color:rgba(238,200,230,.85);font-style:italic}
+#np-content table{width:100%;border-collapse:collapse;margin:10px 0;font-size:11px}
+#np-content td,#np-content th{padding:5px 8px;border:1px solid rgba(140,200,230,.15);text-align:left}
+#np-content th{background:rgba(140,200,230,.08);color:#7affc4}
+#np-content ul,#np-content ol{padding-left:20px;margin:8px 0}
+#np-content li{margin:3px 0}
+#np-content::-webkit-scrollbar{width:6px}
+#np-content::-webkit-scrollbar-track{background:rgba(0,0,0,.2)}
+#np-content::-webkit-scrollbar-thumb{background:rgba(140,200,230,.3);border-radius:3px}
+
+/* ── SEARCH DROPDOWN ──────────────────────────────────────── */
+#search-results{position:fixed;top:50px;left:50%;transform:translateX(-50%);width:290px;
+  background:rgba(5,12,22,.95);border:1px solid rgba(140,200,230,.3);border-top:none;backdrop-filter:blur(12px);
+  max-height:330px;overflow-y:auto;z-index:31;pointer-events:auto;display:none;border-radius:0 0 3px 3px}
+#search-results .sr-item{padding:7px 12px;cursor:pointer;font-size:10px;letter-spacing:.5px;
+  border-bottom:1px solid rgba(140,200,230,.08);color:#cdf;display:flex;justify-content:space-between;gap:8px}
+#search-results .sr-item:last-child{border-bottom:none}
+#search-results .sr-item:hover,#search-results .sr-item.active{background:rgba(140,200,230,.15)}
+#search-results .sr-cat{font-size:8px;letter-spacing:1.5px;opacity:.75;flex-shrink:0}
+
 #fire-btn{position:fixed;bottom:80px;right:18px;background:rgba(238,156,230,.15);border:1px solid rgba(238,156,230,.6);color:#ee9ce6;font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;z-index:30;pointer-events:auto;text-shadow:0 0 8px rgba(238,156,230,.7);transition:all .15s;border-radius:2px}
 #fire-btn:hover{background:rgba(238,156,230,.3);box-shadow:0 0 20px rgba(238,156,230,.4)}
 
@@ -342,12 +391,25 @@ canvas{display:block;width:100%!important;height:100%!important}
     F — fire storm &nbsp; SPACE — reset<br>
     ESC — clear isolation
   </div>
-  <div class="panel" id="ni">
-    <div class="close" id="nic">✕</div>
-    <div class="nit" id="nit"></div>
-    <div class="nim" id="nim"></div>
-  </div>
 </div>
+
+<aside id="note-panel">
+  <header>
+    <button id="np-close">✕</button>
+    <h2 id="np-title">—</h2>
+    <div class="np-meta">
+      <span class="np-cat" id="np-cat">—</span>
+      <span id="np-stats" style="margin-left:8px"></span>
+    </div>
+    <div class="np-actions">
+      <button id="np-obsidian" class="primary">⌥ Open in Obsidian</button>
+      <button id="np-finder">⌘ Reveal in Finder</button>
+    </div>
+  </header>
+  <div id="np-content">Click a neuron to load.</div>
+</aside>
+
+<div id="search-results"></div>
 
 <button id="fire-btn">⚡ FIRE STORM</button>
 <button id="gui-toggle">⚙ CONTROLS</button>
@@ -362,6 +424,7 @@ canvas{display:block;width:100%!important;height:100%!important}
 <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three-spritetext@1.9.0/dist/three-spritetext.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.1/marked.min.js"></script>
 
 <script>
 const DATA = ${DATA};
@@ -685,23 +748,107 @@ function updateArcs(dt) {
 // ════════════════════════════════════════════════════════════════════════════
 // STAR FIELD + AMBIENT DUST
 // ════════════════════════════════════════════════════════════════════════════
-let stars;
-(function makeStars() {
-    const NS = 9000;
-    const sp = new Float32Array(NS*3), sc = new Float32Array(NS*3);
-    for (let i = 0; i < NS; i++) {
-        sp[i*3]   = (Math.random()-.5) * 7500;
-        sp[i*3+1] = (Math.random()-.5) * 7500;
-        sp[i*3+2] = (Math.random()-.5) * 7500;
-        const v = 0.05 + Math.random() * 0.42;
-        sc[i*3] = v*0.4; sc[i*3+1] = v*0.55; sc[i*3+2] = v;
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(sp,3));
-    g.setAttribute('color',    new THREE.BufferAttribute(sc,3));
-    stars = new THREE.Points(g, new THREE.PointsMaterial({ size: .65, vertexColors: true, sizeAttenuation: true }));
-    scene.add(stars);
-})();
+// ── HUBBLE SKYBOX — animated FBM-noise nebula + procedural stars ────────────
+const nebulaIntensityU = { value: 1.0 };
+const nebulaHueU       = { value: 0.0 };
+const starDensityU     = { value: 1.0 };
+const nebulaPulseU     = { value: 1.0 };
+
+const SKY_VERT = \`
+  varying vec3 vDir;
+  void main(){
+    vDir = position;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+\`;
+
+const SKY_FRAG = \`
+  uniform float uTime;
+  uniform float uIntensity;
+  uniform float uHue;
+  uniform float uStars;
+  uniform float uPulse;
+  varying vec3 vDir;
+
+  // hash + simplex-style noise
+  float hash(vec3 p){ p = fract(p * vec3(443.897, 441.423, 437.195)); p += dot(p, p.yzx + 19.19); return fract((p.x+p.y)*p.z); }
+  float noise(vec3 p){
+    vec3 i = floor(p), f = fract(p);
+    f = f*f*(3.0 - 2.0*f);
+    return mix(mix(mix(hash(i+vec3(0,0,0)), hash(i+vec3(1,0,0)), f.x),
+                   mix(hash(i+vec3(0,1,0)), hash(i+vec3(1,1,0)), f.x), f.y),
+               mix(mix(hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)), f.x),
+                   mix(hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)), f.x), f.y), f.z);
+  }
+  float fbm(vec3 p){
+    float v = 0.0, a = 0.5;
+    for(int i = 0; i < 5; i++){ v += a * noise(p); p *= 2.05; a *= 0.5; }
+    return v;
+  }
+
+  vec3 hueShift(vec3 c, float h){
+    const mat3 toYIQ  = mat3(0.299, 0.587, 0.114, 0.596,-0.275,-0.321, 0.212,-0.523, 0.311);
+    const mat3 toRGB  = mat3(1.0, 0.956, 0.621, 1.0,-0.272,-0.647, 1.0,-1.107, 1.704);
+    vec3 yiq = toYIQ * c;
+    float hue = atan(yiq.z, yiq.y) + h;
+    float ch  = length(yiq.yz);
+    return toRGB * vec3(yiq.x, ch*cos(hue), ch*sin(hue));
+  }
+
+  void main(){
+    vec3 d = normalize(vDir);
+
+    // global slow swirl
+    float t = uTime * 0.012;
+    vec3 q = d * 1.8 + vec3(t, -t*0.6, t*0.4);
+    float n1 = fbm(q);
+    float n2 = fbm(q * 2.3 + vec3(5.2, -1.7, 3.1));
+    float n3 = fbm(d * 8.0 - vec3(t*1.4));
+
+    // cloud mask — soft, mostly dark
+    float mask = smoothstep(0.45, 0.95, n1 * 0.7 + n2 * 0.45);
+
+    // pulsing nebula breathing
+    float pulse = 0.85 + 0.15 * sin(uTime * 0.25);
+
+    // palette: deep magenta → teal → amber tints
+    vec3 magenta = vec3(0.55, 0.10, 0.45);
+    vec3 teal    = vec3(0.05, 0.35, 0.55);
+    vec3 amber   = vec3(0.50, 0.25, 0.10);
+    vec3 cloudC  = mix(mix(magenta, teal, n2), amber, n3 * 0.55);
+    cloudC = hueShift(cloudC, uHue);
+
+    vec3 cloud = cloudC * mask * 0.32 * uIntensity * mix(1.0, pulse, uPulse);
+
+    // procedural stars — high-frequency hash + twinkle
+    vec3 sP    = d * 240.0;
+    float sH   = hash(floor(sP));
+    float star = step(0.9975 - 0.0035 * uStars, sH);
+    float tw   = 0.55 + 0.45 * sin(uTime * 3.0 + sH * 67.0);
+    vec3 starC = mix(vec3(0.7,0.8,1.0), vec3(1.0,0.85,0.6), hash(floor(sP)*1.3));
+    vec3 starV = starC * star * tw * 0.95;
+
+    // brighter "named" stars + tiny galaxy specks
+    vec3 sP2   = d * 60.0;
+    float sH2  = hash(floor(sP2));
+    float big  = step(0.999, sH2);
+    float twb  = 0.6 + 0.4 * sin(uTime * 2.0 + sH2 * 31.0);
+    vec3 bigV  = vec3(1.0, 0.95, 0.8) * big * twb * 1.4;
+
+    vec3 col = cloud + starV + bigV;
+    gl_FragColor = vec4(col, 1.0);
+  }
+\`;
+
+const skyMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: timeU, uIntensity: nebulaIntensityU, uHue: nebulaHueU, uStars: starDensityU, uPulse: nebulaPulseU },
+    vertexShader: SKY_VERT, fragmentShader: SKY_FRAG,
+    side: THREE.BackSide, depthWrite: false, depthTest: false,
+});
+const sky = new THREE.Mesh(new THREE.SphereGeometry(4800, 48, 32), skyMat);
+sky.renderOrder = -1;
+scene.add(sky);
+const stars = sky;   // alias for layer-toggle hook
 
 // ── COLOURED NEBULA DUST per cortex (gives the galaxy look) ─────────────────
 const DUST_PER_LOBE = 600;
@@ -779,22 +926,98 @@ raycaster.params.Points.threshold = 8;
 const mouse = new THREE.Vector2();
 let isolated = null;
 
-function showNodeInfo(idx) {
+let manifest = { vault: '', vaultPath: '' };
+fetch('/api/manifest').then(r => r.json()).then(m => manifest = m).catch(()=>{});
+
+const npLobeColors = {};   // for category accent on panel
+for (const k of Object.keys(DATA.lobes)) npLobeColors[k] = DATA.lobes[k].color;
+
+async function showNodeInfo(idx) {
     const id = DATA.ids[idx];
+    const relPath = DATA.paths[idx];
+    const cat = DATA.cats[idx];
+
     document.getElementById('sf').textContent = id.slice(0,18) + (id.length>18?'…':'');
-    const nbrs = DATA.adj[idx].slice(0, 10).map(i => DATA.ids[i]);
-    document.getElementById('nit').textContent = id;
-    document.getElementById('nim').innerHTML =
-        'CORTEX ' + DATA.cats[idx] + '<br>' +
-        'SYNAPSES ' + DATA.adj[idx].length + '<br>' +
-        'WORDS ' + DATA.words[idx] +
-        (nbrs.length ? '<br><br>CONNECTED TO<br>' + nbrs.map(n => '· ' + n.slice(0,30)).join('<br>') : '');
-    document.getElementById('ni').style.display = 'block';
+
+    document.getElementById('nit') && (document.getElementById('nit').textContent = id);
+
+    // ── side panel ────────────────────────────────────────────────────
+    document.getElementById('np-title').textContent = id;
+    const catEl = document.getElementById('np-cat');
+    catEl.textContent = cat;
+    catEl.style.color = npLobeColors[cat] || '#aaccdd';
+    catEl.style.background = 'rgba(' + (parseInt(npLobeColors[cat].slice(1,3),16))+','+(parseInt(npLobeColors[cat].slice(3,5),16))+','+(parseInt(npLobeColors[cat].slice(5,7),16))+',.18)';
+    document.getElementById('np-stats').textContent =
+        DATA.adj[idx].length + ' synapses · ' + DATA.words[idx] + ' words';
+
+    const np = document.getElementById('note-panel');
+    np.classList.add('open');
+    np.dataset.path = relPath;
+
+    const content = document.getElementById('np-content');
+    if (!relPath) { content.innerHTML = '<em>(synthetic node — no file)</em>'; return; }
+
+    content.innerHTML = '<em style="opacity:.5">loading ' + relPath + '…</em>';
+    try {
+        const r = await fetch('/api/note?path=' + encodeURIComponent(relPath));
+        if (!r.ok) throw new Error(r.statusText);
+        const j = await r.json();
+        // Strip YAML frontmatter for prettier rendering
+        let md = j.content.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '');
+        // Convert Obsidian [[wikilinks]] to plain bold so they don't 404
+        md = md.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, l, a) => '**' + (a || l) + '**');
+        content.innerHTML = marked.parse(md);
+
+        // ── append "connected neurons" footer ─────────────────────────
+        const nbrs = DATA.adj[idx].slice(0, 20);
+        if (nbrs.length) {
+            const list = nbrs.map(n => {
+                return '<a href="#" data-idx="' + n + '">' + DATA.ids[n] + '</a>';
+            }).join(' · ');
+            content.insertAdjacentHTML('beforeend',
+                '<hr style="border:none;border-top:1px solid rgba(140,200,230,.12);margin:24px 0 14px"/>' +
+                '<div style="font-size:9px;letter-spacing:2px;color:#7affc4;margin-bottom:8px">◇ CONNECTED ' + DATA.adj[idx].length + '</div>' +
+                '<div style="font-size:11px;line-height:1.8">' + list + '</div>');
+            content.querySelectorAll('a[data-idx]').forEach(a => {
+                a.addEventListener('click', e => {
+                    e.preventDefault();
+                    const j = +a.getAttribute('data-idx');
+                    selectByIndex(j);
+                });
+            });
+        }
+    } catch (e) {
+        content.innerHTML = '<em style="color:#ff7a99">could not load: ' + e.message + '</em>';
+    }
 }
+
+function selectByIndex(idx) {
+    showNodeInfo(idx);
+    fireNeuron(idx, 0, clock.getElapsedTime());
+    const tgt = new THREE.Vector3(DATA.xs[idx], DATA.ys[idx], DATA.zs[idx]);
+    const dir = camera.position.clone().sub(tgt).normalize().multiplyScalar(220);
+    flyTo(tgt.clone().add(dir), tgt);
+}
+
 function clearSelection() {
-    document.getElementById('ni').style.display = 'none';
+    document.getElementById('note-panel').classList.remove('open');
     document.getElementById('sf').textContent = '—';
 }
+
+// ── panel buttons ─────────────────────────────────────────────────────
+document.getElementById('np-close').addEventListener('click', clearSelection);
+document.getElementById('np-obsidian').addEventListener('click', () => {
+    const rel = document.getElementById('note-panel').dataset.path;
+    if (!rel || !manifest.vault) return;
+    const link = 'obsidian://open?vault=' + encodeURIComponent(manifest.vault) +
+                 '&file=' + encodeURIComponent(rel.replace(/\\.md$/, ''));
+    window.open(link, '_self');
+});
+document.getElementById('np-finder').addEventListener('click', () => {
+    const rel = document.getElementById('note-panel').dataset.path;
+    if (!rel) return;
+    fetch('/api/finder?path=' + encodeURIComponent(rel));
+});
 
 function applyIsolation() {
     const c = nodeGeo.attributes.aColor;
@@ -829,13 +1052,10 @@ renderer.domElement.addEventListener('click', e => {
     raycaster.setFromCamera(mouse, camera);
     const hits = raycaster.intersectObject(nodeCloud);
     if (hits.length) {
-        const idx = hits[0].index;
-        showNodeInfo(idx);
-        fireNeuron(idx, 0, clock.getElapsedTime());
-        const tgt = new THREE.Vector3(DATA.xs[idx], DATA.ys[idx], DATA.zs[idx]);
-        const dir = camera.position.clone().sub(tgt).normalize().multiplyScalar(200);
-        flyTo(tgt.clone().add(dir), tgt);
-    } else { clearSelection(); }
+        selectByIndex(hits[0].index);
+    } else {
+        clearSelection();
+    }
 });
 
 function flyTo(p, tgt, dur=1100) {
@@ -850,19 +1070,79 @@ function flyTo(p, tgt, dur=1100) {
     } step();
 }
 
-document.getElementById('si').addEventListener('input', e => {
-    const q = e.target.value.toLowerCase().trim();
+// ── SEARCH with dropdown of matching neurons ─────────────────────────
+const searchEl  = document.getElementById('si');
+const resultsEl = document.getElementById('search-results');
+let searchActiveIdx = -1;
+
+function runSearch(q) {
     const c = nodeGeo.attributes.aColor;
+    const Q = q.toLowerCase().trim();
+
+    // dim/highlight everything
     for (let i = 0; i < N; i++) {
-        const match = !q || DATA.ids[i].toLowerCase().includes(q);
+        const match = !Q || DATA.ids[i].toLowerCase().includes(Q);
         const col = COLOR[DATA.cats[i]];
         if (match) c.setXYZ(i, col.r, col.g, col.b);
         else       c.setXYZ(i, col.r*0.04, col.g*0.04, col.b*0.04);
     }
     c.needsUpdate = true;
+
+    // build dropdown
+    if (!Q) { resultsEl.style.display = 'none'; return; }
+    const hits = [];
+    for (let i = 0; i < N; i++) {
+        if (DATA.ids[i].toLowerCase().includes(Q)) hits.push(i);
+        if (hits.length >= 80) break;
+    }
+    // rank by degree
+    hits.sort((a, b) => DATA.adj[b].length - DATA.adj[a].length);
+    const top = hits.slice(0, 30);
+
+    resultsEl.innerHTML = top.map((idx, k) =>
+        '<div class="sr-item' + (k === 0 ? ' active' : '') + '" data-idx="' + idx + '">' +
+        '<span>' + DATA.ids[idx].slice(0, 38) + (DATA.ids[idx].length > 38 ? '…' : '') + '</span>' +
+        '<span class="sr-cat" style="color:' + npLobeColors[DATA.cats[idx]] + '">' + DATA.cats[idx].slice(0,4) + '</span>' +
+        '</div>'
+    ).join('');
+    resultsEl.style.display = top.length ? 'block' : 'none';
+    searchActiveIdx = 0;
+
+    resultsEl.querySelectorAll('.sr-item').forEach(el => {
+        el.addEventListener('click', () => {
+            selectByIndex(+el.getAttribute('data-idx'));
+            resultsEl.style.display = 'none';
+        });
+    });
+}
+
+searchEl.addEventListener('input', e => runSearch(e.target.value));
+searchEl.addEventListener('focus', () => searchEl.value && runSearch(searchEl.value));
+searchEl.addEventListener('keydown', e => {
+    const items = [...resultsEl.querySelectorAll('.sr-item')];
+    if (!items.length) return;
+    if (e.code === 'ArrowDown' || e.code === 'ArrowUp') {
+        e.preventDefault();
+        items[searchActiveIdx]?.classList.remove('active');
+        searchActiveIdx = (searchActiveIdx + (e.code === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        items[searchActiveIdx].classList.add('active');
+        items[searchActiveIdx].scrollIntoView({ block: 'nearest' });
+    } else if (e.code === 'Enter') {
+        e.preventDefault();
+        const idx = +items[searchActiveIdx].getAttribute('data-idx');
+        selectByIndex(idx);
+        resultsEl.style.display = 'none';
+        searchEl.blur();
+    } else if (e.code === 'Escape') {
+        resultsEl.style.display = 'none';
+        searchEl.blur();
+    }
+});
+document.addEventListener('click', e => {
+    if (!e.target.closest('#search-results') && e.target !== searchEl) resultsEl.style.display = 'none';
 });
 
-document.getElementById('nic').addEventListener('click', clearSelection);
+// (old close handler replaced by #np-close)
 document.getElementById('fire-btn').addEventListener('click', () => fireStorm(clock.getElapsedTime()));
 
 document.getElementById('sn').textContent = N;
@@ -908,6 +1188,11 @@ const defaults = {
     bloomRadius:     0.85,
     bloomThreshold:  0.30,
     exposure:        0.62,
+    // background
+    nebulaIntensity: 1.0,
+    nebulaHue:       0.0,
+    nebulaPulse:     1.0,
+    starDensity:     1.0,
     // motion
     autoRotate:      true,
     rotateSpeed:     0.15,
@@ -957,6 +1242,11 @@ function applyAll() {
     // visual
     if (bloomPass) { bloomPass.strength = params.bloomStrength; bloomPass.radius = params.bloomRadius; bloomPass.threshold = params.bloomThreshold; }
     renderer.toneMappingExposure = params.exposure;
+    // background
+    nebulaIntensityU.value = params.nebulaIntensity;
+    nebulaHueU.value       = params.nebulaHue;
+    nebulaPulseU.value     = params.nebulaPulse;
+    starDensityU.value     = params.starDensity;
     // motion
     controls.autoRotate = params.autoRotate;
     controls.autoRotateSpeed = params.rotateSpeed;
@@ -995,6 +1285,13 @@ fAtm.add(params, 'bloomStrength',  0, 2, 0.01).name('bloom strength').onChange(a
 fAtm.add(params, 'bloomRadius',    0, 2, 0.01).name('bloom radius').onChange(applyAll);
 fAtm.add(params, 'bloomThreshold', 0, 1, 0.01).name('bloom threshold').onChange(applyAll);
 fAtm.add(params, 'exposure',       0, 2, 0.01).name('exposure').onChange(applyAll);
+
+// ── NEBULA folder ───────────────────────────────────────────
+const fNeb = gui.addFolder('Nebula Sky');
+fNeb.add(params, 'nebulaIntensity', 0, 3,    0.05).name('nebula brightness').onChange(applyAll);
+fNeb.add(params, 'nebulaHue',      -3.14, 3.14, 0.01).name('colour field').onChange(applyAll);
+fNeb.add(params, 'nebulaPulse',     0, 3,    0.05).name('pulse depth').onChange(applyAll);
+fNeb.add(params, 'starDensity',     0, 3,    0.05).name('star density').onChange(applyAll);
 
 // ── MOTION folder ─────────────────────────────────────────────
 const fMot = gui.addFolder('Motion');

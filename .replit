@@ -1,0 +1,20 @@
+run = "node server.js"
+entrypoint = "server.js"
+hidden = [".config", "package-lock.json"]
+modules = ["nodejs-20"]
+
+[nix]
+channel = "stable-23_11"
+
+[env]
+PORT = "8080"
+# AUTH_USER and AUTH_PASS go in Replit Secrets (lock icon in the sidebar)
+# CITADEL_VAULT goes in Secrets too
+
+[deployment]
+run = ["sh", "-c", "node server.js"]
+deploymentTarget = "cloudrun"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
