@@ -522,6 +522,7 @@ canvas{display:block;width:100%!important;height:100%!important}
 .cm-trans{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
 .cm-trans-tag{font-size:8.5px;letter-spacing:1.5px;color:#aaccdd;background:rgba(140,200,230,.10);border:1px solid rgba(140,200,230,.25);padding:2px 7px;border-radius:10px}
 .cm-text{margin-top:4px}
+.cm-stella-seg{color:#ffd28a;background:rgba(255,210,138,.08);padding:1px 5px;border-radius:3px;border-left:2px solid #ffd28a;padding-left:7px;display:inline;margin:0 2px;font-style:italic}
 .cm-tour{margin-top:10px;display:flex;flex-direction:column;gap:5px;padding-top:8px;border-top:1px dashed rgba(122,255,196,.18)}
 .cm-stop{display:flex;gap:6px;margin-top:6px;font-size:9px;letter-spacing:1px}
 .cm-tour-step{display:flex;gap:8px;cursor:pointer;padding:5px 7px;border-radius:2px;background:rgba(140,200,230,.04);transition:background .12s}
@@ -1968,7 +1969,13 @@ function chatRender() {
         if (msg.stella && msg.stella.chunks > 0) {
             html += '<div style="font-size:8.5px;letter-spacing:2px;color:#7affc4;margin-bottom:6px">◉ STELLA · ' + msg.stella.chunks + ' chunks</div>';
         }
-        html += '<div class="cm-text">' + esc(msg.text) + '</div>';
+        // render with speaker spans
+        const renderedSegments = parseSpeakerSegments(msg.text).map(s =>
+            s.voice === 'stella'
+                ? '<span class="cm-stella-seg">' + esc(s.text) + '</span>'
+                : esc(s.text)
+        ).join('');
+        html += '<div class="cm-text">' + renderedSegments + '</div>';
 
         // ── render UI actions ──
         for (const act of (msg.actions || [])) {
@@ -2284,21 +2291,51 @@ function attachTTSAnalyser(audioEl) {
     } catch (e) { console.warn('audio analyser:', e.message); }
 }
 
-async function speakEleven(text) {
+async function speakEleven(text, voice) {
     try {
         const r = await fetch('/api/speak', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
+            body: JSON.stringify({ text, voice: voice || 'marius' }),
         });
         if (!r.ok) return false;
         const blob = await r.blob();
         if (elevenAudio) { elevenAudio.pause(); }
         elevenAudio = new Audio(URL.createObjectURL(blob));
         attachTTSAnalyser(elevenAudio);
-        elevenAudio.play().catch(() => {});
+        // wait until audio finishes so segments play in sequence
+        await new Promise((resolve) => {
+            elevenAudio.addEventListener('ended', resolve, { once: true });
+            elevenAudio.addEventListener('error', resolve, { once: true });
+            elevenAudio.play().catch(resolve);
+        });
         return true;
     } catch (e) { return false; }
+}
+
+// Parse <stella>...</stella> / <marius>...</marius> tags into voiced segments.
+// Default voice for plain text is marius.
+function parseSpeakerSegments(text) {
+    const re = /<(stella|marius)>([\\s\\S]*?)<\\/\\1>/g;
+    const out = []; let last = 0; let m;
+    while ((m = re.exec(text)) !== null) {
+        if (m.index > last) {
+            const pre = text.slice(last, m.index);
+            if (pre.trim()) out.push({ voice: 'marius', text: pre });
+        }
+        if (m[2].trim()) out.push({ voice: m[1], text: m[2] });
+        last = m.index + m[0].length;
+    }
+    if (last < text.length) {
+        const tail = text.slice(last);
+        if (tail.trim()) out.push({ voice: 'marius', text: tail });
+    }
+    return out.length ? out : [{ voice: 'marius', text }];
+}
+
+// Strip speaker tags for display
+function stripSpeakerTags(text) {
+    return String(text || '').replace(/<\\/?(stella|marius)>/g, '');
 }
 
 function speakBrowser(text) {
@@ -2317,13 +2354,18 @@ function speakBrowser(text) {
 
 async function speak(text) {
     if (!autoSpeak) return;
-    const clean = stripForSpeech(text);
-    if (!clean) return;
-    if (voiceCaps.eleven) {
-        const ok = await speakEleven(clean);
-        if (ok) return;
+    if (!text) return;
+    const segments = parseSpeakerSegments(text);
+    for (const seg of segments) {
+        const clean = stripForSpeech(seg.text);
+        if (!clean) continue;
+        if (voiceCaps.eleven) {
+            const ok = await speakEleven(clean, seg.voice);
+            if (!ok) speakBrowser(clean);
+        } else {
+            speakBrowser(clean);
+        }
     }
-    speakBrowser(clean);
 }
 if (window.speechSynthesis) speechSynthesis.onvoiceschanged = () => {};
 

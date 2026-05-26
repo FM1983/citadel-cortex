@@ -62,11 +62,22 @@ const CHAT_MAX_TURNS = parseInt(process.env.CHAT_MAX_TURNS || '6', 10);
 // ── OpenAI Whisper + ElevenLabs keys ────────────────────────────────────────
 let OPENAI_KEY     = process.env.OPENAI_API_KEY     || '';
 let ELEVEN_KEY     = process.env.ELEVENLABS_API_KEY || '';
-// Marius Coetzee — 50-year-old white SA male, Afrikaans-flavoured.
-// Tuned for amusement: high speed, low stability = more accent + character variance.
-// Override with ELEVENLABS_VOICE_ID + ELEVENLABS_SPEED env vars.
-const ELEVEN_VOICE = process.env.ELEVENLABS_VOICE_ID || 'n0ewC1nRdE3icIL01Xrs';
-const ELEVEN_SPEED = parseFloat(process.env.ELEVENLABS_SPEED || '1.18');
+// Voice cast: Marius (vault librarian) + Stella (operator).
+// Each voice has its own ID + tuned voice_settings. Override individual IDs via env.
+const VOICES = {
+    marius: {
+        id:      process.env.ELEVENLABS_VOICE_ID_MARIUS || process.env.ELEVENLABS_VOICE_ID || 'n0ewC1nRdE3icIL01Xrs',
+        // 50yo white SA male — Afrikaans-flavoured, dry, fast
+        stability: 0.38, similarity_boost: 0.85, style: 0.48,
+        speed:   parseFloat(process.env.ELEVENLABS_SPEED_MARIUS || process.env.ELEVENLABS_SPEED || '1.18'),
+    },
+    stella: {
+        id:      process.env.ELEVENLABS_VOICE_ID_STELLA || 'U9VgC8Xinl7nnNsyDd3J',
+        // Rachel — fun warm conversational Australian female, 30s
+        stability: 0.45, similarity_boost: 0.88, style: 0.42,
+        speed:   parseFloat(process.env.ELEVENLABS_SPEED_STELLA || '1.10'),
+    },
+};
 if (!OPENAI_KEY || !ELEVEN_KEY) {
     const home = require('os').homedir();
     for (const f of [
@@ -724,34 +735,35 @@ http.createServer((req, res) => {
         return;
     }
 
-    // ── /api/speak  (ElevenLabs TTS — returns audio/mpeg) ─────────────────
+    // ── /api/speak  (ElevenLabs TTS — voice=marius|stella|<voice_id>) ─────
     if (url === '/api/speak' && req.method === 'POST') {
         if (!ELEVEN_KEY) return sendJSON(res, 503, { error: 'ELEVENLABS_API_KEY not set' });
         let body = '';
         req.on('data', c => body += c);
         req.on('end', async () => {
-            let text;
-            try { text = JSON.parse(body).text; } catch { return sendJSON(res, 400, { error: 'bad json' }); }
+            let parsed;
+            try { parsed = JSON.parse(body); } catch { return sendJSON(res, 400, { error: 'bad json' }); }
+            const text = parsed.text;
             if (!text) return sendJSON(res, 400, { error: 'no text' });
-            const voiceId = ELEVEN_VOICE;
+            const voiceKey = (parsed.voice || 'marius').toLowerCase();
+            const v = VOICES[voiceKey] || (voiceKey.length > 10 ? { id: parsed.voice } : VOICES.marius);
+            const settings = {
+                stability: v.stability ?? 0.5,
+                similarity_boost: v.similarity_boost ?? 0.85,
+                style: v.style ?? 0.3,
+                use_speaker_boost: true,
+                speed: v.speed ?? 1.0,
+            };
             try {
-                const r = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + voiceId + '?optimize_streaming_latency=2', {
+                const r = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + v.id + '?optimize_streaming_latency=2', {
                     method: 'POST',
-                    headers: {
-                        'xi-api-key': ELEVEN_KEY,
-                        'Content-Type': 'application/json',
-                        'Accept': 'audio/mpeg',
-                    },
-                    body: JSON.stringify({
-                        text,
-                        model_id: 'eleven_turbo_v2_5',
-                        voice_settings: { stability: 0.38, similarity_boost: 0.85, style: 0.48, use_speaker_boost: true, speed: ELEVEN_SPEED },
-                    }),
+                    headers: { 'xi-api-key': ELEVEN_KEY, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+                    body: JSON.stringify({ text, model_id: 'eleven_turbo_v2_5', voice_settings: settings }),
                 });
                 if (!r.ok) return sendJSON(res, 502, { error: 'elevenlabs ' + r.status + ': ' + (await r.text()).slice(0, 200) });
                 const audio = Buffer.from(await r.arrayBuffer());
-                logUsage('elevenlabs-turbo-2.5', { input_tokens: text.length, output_tokens: 0 }, 'speak');
-                res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' });
+                logUsage('elevenlabs-turbo-2.5', { input_tokens: text.length, output_tokens: 0 }, 'speak:' + voiceKey);
+                res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store', 'X-Voice': voiceKey });
                 res.end(audio);
             } catch (e) { sendJSON(res, 500, { error: e.message }); }
         });
@@ -921,6 +933,13 @@ http.createServer((req, res) => {
                 ' • YOU (Marius) are the LIBRARIAN. You manage the vault — read indexed content, organise tours, capture notes back into the brain.',
                 ' • STELLA is the OPERATOR. She has live access to Gmail, Google Calendar, Notion, the Dropbox filesystem, and the phone sensorium. You direct her via stella_* tools — DON\'T tell the user "I can\'t access that" — call Stella instead.',
                 ' • Pattern: when a question needs LIVE external data, ask Stella, synthesise, then capture the synthesis back to the brain via write_note so the next query finds it indexed and free.',
+                '',
+                'TWO-VOICE OUTPUT — IMPORTANT:',
+                ' • Your reply is TTS\'d. You speak in your own voice by default.',
+                ' • You can hand off to Stella mid-reply by wrapping her words in <stella>...</stella> tags. Her Australian voice plays those segments.',
+                ' • Use it when she\'s the natural messenger — relaying calendar facts, gmail summaries, current location, filesystem hits. Keep your own framing in your voice, then let Stella deliver her findings, then return to your voice.',
+                ' • Example reply:  Right boet, I asked Stella to check your inbox. <stella>You\'ve got three priority threads — Tom on McLeans, IRD on the statutory demand, and Lowthers chasing fees.</stella> Want me to drill into any of them?',
+                ' • Don\'t over-use the handoff — only when it\'s genuinely her work. Single-line factual relays only, not whole speeches.',
                 '',
                 'YOUR (LIBRARIAN) TOOLS:',
                 '  current_time              — date/time NZ (always call FIRST for any "today/recent/this week" query)',
