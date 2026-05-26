@@ -515,7 +515,8 @@ canvas{display:block;width:100%!important;height:100%!important}
 #chat-form button{background:rgba(122,255,196,.14);border:1px solid rgba(122,255,196,.5);color:#7affc4;
   font-family:'Courier New',monospace;font-size:11px;padding:8px 13px;cursor:pointer;border-radius:2px}
 #chat-form button:hover{background:rgba(122,255,196,.28)}
-#chat-mic{background:rgba(140,200,230,.10)!important;border:1px solid rgba(140,200,230,.35)!important;color:#aaccdd!important;font-size:14px!important;padding:8px 10px!important;transition:all .12s}
+#chat-mic{background:rgba(255,122,153,.10)!important;border:1px solid rgba(255,122,153,.5)!important;color:#ff7a99!important;font-size:18px!important;padding:6px 13px!important;transition:all .12s;line-height:1}
+#chat-mic:hover{background:rgba(255,122,153,.25)!important;box-shadow:0 0 14px rgba(255,122,153,.35)}
 #chat-mic.listening{background:rgba(255,122,153,.25)!important;border-color:#ff7a99!important;color:#fff!important;animation:micPulse 1s infinite;box-shadow:0 0 14px rgba(255,122,153,.5)}
 #chat-input.listening{border-color:#ff7a99!important;box-shadow:0 0 12px rgba(255,122,153,.35)!important}
 @keyframes micPulse{0%,100%{box-shadow:0 0 8px rgba(255,122,153,.4)}50%{box-shadow:0 0 22px rgba(255,122,153,.85)}}
