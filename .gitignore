@@ -1,0 +1,25 @@
+# Generated artefacts — re-create with `npm run build`
+neural-graph.html
+vault-cache.json
+vault-categorized.json
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node
+node_modules/
+npm-debug.log
+package-lock.json
+
+# Local overrides
+config.local.js
+.env
+.env.local

@@ -1,0 +1,23 @@
+{
+  "name": "citadel-cortex",
+  "version": "0.1.0",
+  "description": "3D neural visualisation of an Obsidian vault — cortexes, synapses, lightning, all dancing in WebGL.",
+  "main": "server.js",
+  "scripts": {
+    "scan":       "node scan-vault.js",
+    "categorize": "node categorize-vault.js",
+    "build":      "node build-brain.js",
+    "obsidian":   "node rationalise-obsidian-graph.js",
+    "serve":      "node server.js",
+    "pipeline":   "node scan-vault.js && node categorize-vault.js && node build-brain.js",
+    "all":        "npm run pipeline && npm run serve"
+  },
+  "engines": { "node": ">=16" },
+  "license": "MIT",
+  "author": "Farhad Moinfar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FM1983/citadel-cortex"
+  },
+  "keywords": ["obsidian","graph","threejs","visualization","webgl","knowledge-graph","neural-network"]
+}
