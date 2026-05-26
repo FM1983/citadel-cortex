@@ -1004,9 +1004,9 @@ async function showNodeInfo(idx) {
         if (!r.ok) throw new Error(r.statusText);
         const j = await r.json();
         // Strip YAML frontmatter for prettier rendering
-        let md = j.content.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '');
+        let md = j.content.replace(/^---\\s*\\n[\\s\\S]*?\\n---\\s*\\n/, '');
         // Convert Obsidian [[wikilinks]] to plain bold so they don't 404
-        md = md.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, l, a) => '**' + (a || l) + '**');
+        md = md.replace(/\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]/g, (_, l, a) => '**' + (a || l) + '**');
         content.innerHTML = marked.parse(md);
 
         // ── append "connected neurons" footer ─────────────────────────
