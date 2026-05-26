@@ -253,7 +253,7 @@ for (const r of records) {
 //   For each link we make 5 sub-segments with small perpendicular zigzag.
 //   Stored flat as LineSegments-compatible buffer (10 vertices per link).
 console.log('⚡ Pre-tessellating jagged synapses…');
-const SEG = 3;                          // sub-segments per link (down from 5 — same look, 40% smaller payload)
+const SEG = 5;                          // sub-segments per link — smooth bow needs ≥4
 const VERTS_PER_LINK = SEG * 2;         // line-segment pairs
 const linkPosArr  = new Float32Array(links.length * VERTS_PER_LINK * 3);
 const linkLPArr   = new Float32Array(links.length * VERTS_PER_LINK);
@@ -267,21 +267,32 @@ for (let i = 0; i < links.length; i++) {
     const A = [nodeArr[a].x, nodeArr[a].y, nodeArr[a].z];
     const B = [nodeArr[b].x, nodeArr[b].y, nodeArr[b].z];
     const len = Math.hypot(B[0]-A[0], B[1]-A[1], B[2]-A[2]);
-    const jitter = Math.min(len * 0.05, 4.5);
 
-    // build SEG+1 points with random offset on interior points
+    // ── Organic axon: smooth arc with a single biased mid-control-point ─
+    // Pick ONE perpendicular displacement direction per link (consistent, not jittery).
+    // Result is a gentle bow, not a zigzag — looks like soft axonal fibre.
+    const bow = Math.min(len * 0.06, 6.0);
+    // perpendicular vector to AB, with random orientation per link
+    const dx = B[0]-A[0], dy = B[1]-A[1], dz = B[2]-A[2];
+    const inv = 1 / (Math.hypot(dx, dy, dz) || 1);
+    const ux = dx*inv, uy = dy*inv, uz = dz*inv;
+    // pick any vector not parallel
+    let rx = Math.random()-0.5, ry = Math.random()-0.5, rz = Math.random()-0.5;
+    // perp = r - (r·u)u, then normalise
+    const dot = rx*ux + ry*uy + rz*uz;
+    let px_ = rx - dot*ux, py_ = ry - dot*uy, pz_ = rz - dot*uz;
+    const pinv = 1 / (Math.hypot(px_, py_, pz_) || 1);
+    px_ *= pinv; py_ *= pinv; pz_ *= pinv;
+
     const pts = [];
     for (let k = 0; k <= SEG; k++) {
         const t = k / SEG;
-        let px = A[0] + (B[0]-A[0]) * t;
-        let py = A[1] + (B[1]-A[1]) * t;
-        let pz = A[2] + (B[2]-A[2]) * t;
-        if (k !== 0 && k !== SEG) {
-            px += rand() * jitter;
-            py += rand() * jitter;
-            pz += rand() * jitter;
-        }
-        pts.push([px,py,pz]);
+        // smooth bow factor — zero at ends, peaks in middle
+        const bowF = Math.sin(t * Math.PI) * bow;
+        const px = A[0] + dx * t + px_ * bowF;
+        const py = A[1] + dy * t + py_ * bowF;
+        const pz = A[2] + dz * t + pz_ * bowF;
+        pts.push([px, py, pz]);
     }
 
     const seed = (i * 0.137) % 1;
@@ -856,14 +867,17 @@ const LINK_FRAG = \`
   varying float vLP;
   varying float vSeed;
   void main(){
-    float flow  = fract(vLP - uTime * 0.4 + vSeed * 7.0);
-    float head  = smoothstep(0.0, 0.05, flow) * (1.0 - smoothstep(0.28, 1.0, flow));
-    float crackle = 0.7 + 0.3 * sin(uTime * 15.0 + vSeed * 33.0 + vLP * 4.0);
-    float base  = 0.025 * crackle;
-    vec3  cyan  = vec3(0.0, 0.7, 1.0);
-    vec3  white = vec3(1.0, 1.0, 1.0);
-    vec3  col   = mix(cyan, white, head * 0.7);
-    float alpha = (base + head * 0.55) * crackle * uLinkBright;
+    // slow organic breathing — no sharp flow, no crackle
+    // gentle bell-shaped pulse drifting along the axon
+    float flow  = fract(vLP * 0.5 - uTime * 0.06 + vSeed * 3.0);
+    float bell  = exp(-pow((flow - 0.5) * 4.0, 2.0));   // soft gaussian
+    float breath = 0.55 + 0.45 * sin(uTime * 0.5 + vSeed * 6.0);
+    float base   = 0.04;
+    // muted teal-cyan, no white spikes
+    vec3  cold   = vec3(0.18, 0.55, 0.70);
+    vec3  warm   = vec3(0.55, 0.85, 0.95);
+    vec3  col    = mix(cold, warm, bell * 0.6 + breath * 0.2);
+    float alpha  = (base + bell * 0.20) * (0.7 + 0.3 * breath) * uLinkBright;
     gl_FragColor = vec4(col, alpha);
   }
 \`;
