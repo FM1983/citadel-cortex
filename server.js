@@ -185,6 +185,65 @@ const NAVIGATOR_TOOLS = [
         input_schema: { type: 'object', properties: {} },
     },
     {
+        name: 'stella_daily_briefing',
+        description: "Pull Stella's PRE-BAKED daily briefing for today — headline, agenda (today's meetings), priority queue (critical emails ranked, noise filtered), calendar + email counts. Call this for ANY question like 'what's on today', 'morning briefing', 'what should I know', 'state of play'. Returns NZT-anchored. PREFER THIS over stella_gmail_priority + stella_calendar separately — it's faster, structured, already filtered.",
+        input_schema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'stella_intel_snapshot',
+        description: "Citadel Command Centre intelligence snapshot — ranked workstreams with risk, momentum, owners, next_actions, open_risks. Use when the user asks 'what are the priorities', 'where should I focus', 'what's hot', 'workstream status', 'biggest risks', or about a specific live project (Babich, Featherston, McLeans, etc) without an open note.",
+        input_schema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'stella_news',
+        description: "CASSANDRA news intelligence — scanned articles + signals matched to Citadel interest terms (war, IRD, M&A, NZ politics, AI, crypto, geopolitics, NZ property). Use for 'any news', 'market signals', 'what's happening out there', 'anything I need to know'. Returns signals with priority, matched terms, top articles.",
+        input_schema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'stella_pending_drafts',
+        description: "Email drafts Stella has prepared but is holding for Farhad's approval. Use for 'anything waiting on me', 'what drafts', 'pending approvals'. Returns drafts list (often empty).",
+        input_schema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'stella_meeting_brief',
+        description: "Preview a meeting briefing — pulls context for a specific calendar event, including history with attendees, related vault notes, recent threads. Use when the user asks 'brief me on the X meeting', 'who am I meeting with', 'context for next meeting'.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                event_id: { type: 'string', description: 'Optional calendar event_id. If omitted, briefs the NEXT upcoming meeting.' },
+            },
+        },
+    },
+    {
+        name: 'stella_fs_recent',
+        description: "Recently-modified files in a mounted Dropbox root. Use for 'what files changed recently', 'what did I drop in last', 'recent activity in Litigation/Marketing/Admin'.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                root_id: { type: 'string', description: 'Mounted root — common: dropbox (whole tree), citadel_main (vault), citadel_intel, citadel_ai, admin, lightspeed, briefing_room', enum: ['dropbox','citadel_main','citadel_intel','citadel_ai','admin','lightspeed','briefing_room'] },
+                limit:   { type: 'integer', description: 'default 20' },
+            },
+            required: ['root_id'],
+        },
+    },
+    {
+        name: 'stella_fs_read',
+        description: "Read the contents of a specific file via Stella's filesystem. Use when stella_filesystem or stella_fs_recent returns a path you need the body of — especially for PDFs/images that aren't markdown.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                root_id: { type: 'string' },
+                relative_path: { type: 'string' },
+            },
+            required: ['root_id', 'relative_path'],
+        },
+    },
+    {
+        name: 'stella_proactive_scan',
+        description: "Trigger Stella's proactive scan — she looks across live context (Gmail, calendar, recent files, brain) and surfaces important signals Farhad should see. Use for 'anything important you've noticed', 'what should I pay attention to', 'do a sweep'. Heavier call — only when the user genuinely wants a broad scan, not for narrow questions.",
+        input_schema: { type: 'object', properties: {} },
+    },
+    {
         name: 'search_vault',
         description: "Keyword-search the FULL vault index (every categorized note, not just the candidate slice). Use when the user mentions a project, person, address, or term that isn't in your candidate table — e.g. 'Papanui', 'Camelot Motel', 'McLane', 'Lowther'. Searches title + folder path. Returns top matches with idx (usable with read_note / open_note), id, cortex, relPath, daysOld.",
         input_schema: {
@@ -323,12 +382,17 @@ async function executeNavigatorTool(name, input, candidateLookup, allCandidates)
             items: filtered.map(c => ({ idx: c.idx, id: c.id, cortex: c.cat, synapses: c.degree })) };
     }
     // ── Stella outbound tools ─────────────────────────────────────────────
-    // Gmail freshness pulls can take ~20s; keep timeout generous on workspace endpoints.
+    // Gmail freshness pulls can take ~20s; daily briefings ~16s; intel ~10s.
     function stellaTimeoutFor(path) {
-        if (path.startsWith('/workspace/gmail')) return 35000;
+        if (path.startsWith('/briefings'))          return 45000;
+        if (path.startsWith('/workspace/gmail'))    return 35000;
+        if (path.startsWith('/ops/proactive'))      return 45000;
+        if (path.startsWith('/intelligence'))       return 20000;
+        if (path.startsWith('/news/intelligence'))  return 20000;
         if (path.startsWith('/workspace/calendar')) return 20000;
         if (path.startsWith('/workspace/notion'))   return 20000;
         if (path.startsWith('/filesystem'))         return 20000;
+        if (path.startsWith('/actions/email-approvals')) return 12000;
         return 15000;
     }
     async function stellaGet(path, qs) {
@@ -420,7 +484,12 @@ async function executeNavigatorTool(name, input, candidateLookup, allCandidates)
     }
     if (name === 'stella_notion') {
         const j = await stellaPost('/workspace/notion/search', { query: input.query, limit: input.limit || 8 });
-        if (j.error) return j;
+        if (j.error) {
+            if (/not mounted|gated|503|client/i.test(j.error)) {
+                return { error: 'Notion is currently gated on Stella — no client mounted. Tell the user it\'s offline rather than retrying.', gated: true };
+            }
+            return j;
+        }
         const items = (j.results || j.pages || []).slice(0, 12);
         return { ok: true, count: items.length, results: items };
     }
@@ -428,6 +497,104 @@ async function executeNavigatorTool(name, input, candidateLookup, allCandidates)
         const j = await stellaGet('/sensorium/phone/location/latest');
         if (j.error) return j;
         return { ok: true, location: j.location || j };
+    }
+
+    // ── New Stella surfaces — daily brief, intel snapshot, news, drafts, etc ──
+    if (name === 'stella_daily_briefing') {
+        const j = await stellaGet('/briefings/daily/today');
+        if (j.error) return j;
+        return {
+            ok:        true,
+            date:      j.date,
+            time_zone: j.time_zone || 'Pacific/Auckland',
+            headline:  j.headline || '',
+            agenda:    j.agenda || [],
+            priority_queue:        j.priority_queue || [],
+            calendar_event_count:  j.calendar_event_count || 0,
+            critical_email_count:  j.critical_email_count || 0,
+        };
+    }
+    if (name === 'stella_intel_snapshot') {
+        const j = await stellaGet('/intelligence/snapshot');
+        if (j.error) return j;
+        const cc = j.command_centre || {};
+        // Compact workstream list for Marius (drop verbose internal fields)
+        const workstreams = (cc.workstreams || []).slice(0, 12).map(w => ({
+            name:    w.name,
+            rank:    w.rank,
+            risk:    w.risk,
+            momentum: w.momentum,
+            owners:  w.owners || [],
+            next_actions: (w.next_actions || []).slice(0, 3),
+            open_risks:   (w.open_risks   || []).slice(0, 3),
+        }));
+        return {
+            ok: true,
+            status:       j.status,
+            checked_at:   j.checked_at,
+            as_of_date:   cc.as_of_date,
+            workstreams,
+        };
+    }
+    if (name === 'stella_news') {
+        const j = await stellaGet('/news/intelligence/snapshot');
+        if (j.error) return j;
+        const sigs = (j.signals || []).slice(0, 8).map(s => ({
+            topic:   s.topic_label || s.topic_id,
+            priority: s.priority,
+            title:   s.title,
+            why:     s.why_it_matters,
+            matched: s.matched_terms || [],
+            top_article: s.articles && s.articles[0] ? {
+                source: s.articles[0].source_label,
+                title:  s.articles[0].title,
+                summary: (s.articles[0].summary || '').slice(0, 240),
+                url:    s.articles[0].url,
+            } : null,
+        }));
+        return { ok: true, article_count: j.article_count, signal_count: j.signal_count, signals: sigs };
+    }
+    if (name === 'stella_pending_drafts') {
+        const j = await stellaGet('/actions/email-approvals/pending');
+        if (j.error) return j;
+        const drafts = (j.drafts || []).map(d => ({
+            id:      d.draft_id || d.id,
+            to:      d.to || d.recipients,
+            subject: d.subject,
+            preview: (d.preview || d.body || '').slice(0, 240),
+            created: d.created_at,
+        }));
+        return { ok: true, count: drafts.length, drafts };
+    }
+    if (name === 'stella_meeting_brief') {
+        const body = input.event_id ? { event_id: input.event_id } : {};
+        const j = await stellaPost('/briefings/meetings/preview', body);
+        if (j.error) return j;
+        return { ok: true, brief: j };
+    }
+    if (name === 'stella_fs_recent') {
+        const j = await stellaGet('/filesystem/recent', { root_id: input.root_id, limit: input.limit || 20 });
+        if (j.error) return j;
+        const items = (j.items || j.files || j.results || []).slice(0, 25).map(f => ({
+            path:     f.relative_path || f.path,
+            mtime:    f.mtime || f.modified_at,
+            size:     f.size,
+            kind:     f.kind || f.extension,
+        }));
+        return { ok: true, root_id: input.root_id, count: items.length, results: items };
+    }
+    if (name === 'stella_fs_read') {
+        const j = await stellaPost('/filesystem/read', {
+            root_id: input.root_id, relative_path: input.relative_path,
+        });
+        if (j.error) return j;
+        const txt = (j.content || j.text || j.body || '');
+        return { ok: true, path: input.relative_path, content: txt.slice(0, 12000), truncated: txt.length > 12000 };
+    }
+    if (name === 'stella_proactive_scan') {
+        const j = await stellaPost('/ops/proactive/run', {});
+        if (j.error) return j;
+        return { ok: true, scan: j };
     }
 
     if (name === 'write_note') {
@@ -1096,12 +1263,20 @@ http.createServer((req, res) => {
                 '  focus_cortex(cortex)      — isolate one cortex visually',
                 '',
                 'OPERATOR (STELLA) TOOLS — for live data not yet in the brain:',
-                '  stella_gmail(query, max_results)    — live Gmail search (use Gmail syntax: from:bob, has:attachment, newer_than:7d)',
-                '  stella_gmail_priority(max_results)  — high-priority/important unread mail',
-                '  stella_calendar(days_back, days_forward) — Google Calendar events in time window',
-                '  stella_filesystem(query, ...)       — live Dropbox filesystem search (files not yet indexed)',
-                '  stella_notion(query)                — Notion workspace search',
-                '  stella_location()                   — current phone GPS via sensorium',
+                '  ☼ stella_daily_briefing()         — pre-baked daily brief: today\'s agenda + critical emails + priority queue (NZT). PREFER THIS for "morning briefing", "what\'s on today", "state of play", "where am I starting from". Cheaper + cleaner than calling gmail+calendar separately.',
+                '  ⌖ stella_intel_snapshot()         — Citadel Command Centre workstreams: rank, risk, momentum, owners, next_actions, open_risks (Babich Rise, Featherston, McLeans etc). USE FOR "what are the priorities", "where to focus", "biggest risks", "workstream status".',
+                '  ⌬ stella_news()                   — CASSANDRA news intel: signals matched to Citadel interest terms. USE FOR "news", "any signals", "what\'s happening out there".',
+                '  ✎ stella_pending_drafts()         — email drafts Stella has prepped, awaiting Farhad\'s approval. USE FOR "anything waiting on me", "drafts queued".',
+                '  ◐ stella_meeting_brief(event_id?) — preview a meeting brief; omit event_id for next meeting. USE FOR "brief me on the X meeting", "who am I meeting".',
+                '  ⌁ stella_proactive_scan()         — Stella runs a broad proactive sweep across Gmail/calendar/files/brain. HEAVY call — only for "do a sweep", "anything important you\'ve noticed".',
+                '  ✉ stella_gmail(query, max_results)    — live Gmail search (Gmail syntax: from:bob, has:attachment, newer_than:7d)',
+                '  ✉ stella_gmail_priority(max_results)  — raw priority inbox (less curated than stella_daily_briefing — usually prefer that)',
+                '  🗓 stella_calendar(days_back, days_forward) — Google Calendar events in time window',
+                '  📁 stella_filesystem(query)            — Dropbox filesystem search (files not yet indexed)',
+                '  ⏱ stella_fs_recent(root_id, limit)   — recently-modified files in a mounted root (dropbox, citadel_main, admin, lightspeed, etc)',
+                '  📄 stella_fs_read(root_id, relative_path) — read a specific file Stella found',
+                '  📓 stella_notion(query)              — Notion search (NOTE: currently gated — Notion client not mounted; will return gated:true)',
+                '  📍 stella_location()                  — current phone GPS via sensorium',
                 '',
                 'Candidate visible nodes (idx | cortex | days_old | title):',
                 table,
@@ -1186,6 +1361,14 @@ http.createServer((req, res) => {
                                 b.name === 'stella_filesystem'  ? '📁 Stella·FS ' + (result.count || 0) :
                                 b.name === 'stella_notion'      ? '📓 Stella·Notion ' + (result.count || 0) :
                                 b.name === 'stella_location'    ? '📍 Stella·Loc' :
+                                b.name === 'stella_daily_briefing' ? '☼ Stella·Brief ' + (result.headline || '') :
+                                b.name === 'stella_intel_snapshot' ? '⌖ Stella·Intel ' + ((result.workstreams || []).length) + ' streams' :
+                                b.name === 'stella_news'         ? '⌬ Stella·News '  + (result.signal_count || 0) + ' signals' :
+                                b.name === 'stella_pending_drafts'? '✎ Stella·Drafts ' + (result.count || 0) :
+                                b.name === 'stella_meeting_brief' ? '◐ Stella·Meeting brief' :
+                                b.name === 'stella_fs_recent'    ? '⏱ Stella·FS recent ' + (result.count || 0) :
+                                b.name === 'stella_fs_read'      ? '📄 Stella·FS read' :
+                                b.name === 'stella_proactive_scan'? '⌁ Stella·Proactive scan' :
                                 b.name === 'write_note'         ? '✎ captured: ' + ((result.path || '').split('/').pop() || 'note') :
                                 b.name === 'propose_tour'       ? '⌃ ' + (b.input.nodes?.length || 0) + '-stop tour' :
                                 b.name === 'open_note'          ? '👁  open' :
