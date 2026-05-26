@@ -101,12 +101,74 @@ const NAVIGATOR_TOOLS = [
     },
     {
         name: 'search_brain',
-        description: "Search Stella's second-brain (Citadel's institutional memory). Returns up to 6 indexed snippets with source labels. Use for 'what do we know about X' type questions, or to find content beyond what is visible in the candidate node list (e.g. Misc-Working, Police-Stopsign, Limited-license).",
+        description: "Search the second-brain INDEX — content already pulled into Stella's vector index (vault notes, Misc-Working, Police-Stopsign, Limited-license, prior Marius captures). FAST. Use this FIRST for 'what do we know about X' before reaching out to live sources.",
         input_schema: {
             type: 'object',
             properties: { query: { type: 'string', description: 'Natural-language search query' } },
             required: ['query'],
         },
+    },
+    {
+        name: 'stella_gmail',
+        description: "Ask Stella to search LIVE Gmail. Use when the user mentions email, threads, what someone sent, attachments, sender names. Returns thread snippets. After fetching, consider write_note() to capture key facts back to brain.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: "Gmail search syntax: 'from:bob ird', 'subject:settlement', 'has:attachment newer_than:7d'" },
+                max_results: { type: 'integer', description: 'default 8, max 20' },
+            },
+            required: ['query'],
+        },
+    },
+    {
+        name: 'stella_gmail_priority',
+        description: "Ask Stella for the high-priority unread Gmail items. Use for 'what's urgent', 'anything important in my inbox', 'who needs me'.",
+        input_schema: {
+            type: 'object',
+            properties: { max_results: { type: 'integer', description: 'default 8' } },
+        },
+    },
+    {
+        name: 'stella_calendar',
+        description: "Ask Stella for Google Calendar events. Use for 'what's on this week', 'next meeting with X', 'am I free Tuesday'. Time window relative to now.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                days_back:    { type: 'integer', description: 'days backward from now (default 0)' },
+                days_forward: { type: 'integer', description: 'days forward from now (default 14)' },
+                max_results:  { type: 'integer', description: 'default 20' },
+            },
+        },
+    },
+    {
+        name: 'stella_filesystem',
+        description: "Ask Stella to search the live Dropbox filesystem (files Marius's vault index might not have yet — PDFs, images, recent drops). Returns matching file paths.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                query:         { type: 'string', description: 'search terms' },
+                relative_path: { type: 'string', description: 'subfolder to scope to, e.g. Litigation/' },
+                max_results:   { type: 'integer', description: 'default 12' },
+            },
+            required: ['query'],
+        },
+    },
+    {
+        name: 'stella_notion',
+        description: "Ask Stella to search Farhad's Notion workspace.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string' },
+                limit: { type: 'integer', description: 'default 8' },
+            },
+            required: ['query'],
+        },
+    },
+    {
+        name: 'stella_location',
+        description: "Ask Stella for Farhad's current phone location. Use when geographic context matters or user asks where they are.",
+        input_schema: { type: 'object', properties: {} },
     },
     {
         name: 'list_recent',
@@ -219,6 +281,79 @@ async function executeNavigatorTool(name, input, candidateLookup, allCandidates)
         return { ok: true, count: filtered.length, cortex,
             items: filtered.map(c => ({ idx: c.idx, id: c.id, cortex: c.cat, synapses: c.degree })) };
     }
+    // ── Stella outbound tools ─────────────────────────────────────────────
+    async function stellaGet(path, qs) {
+        if (!STELLA_TOKEN) return { error: 'Stella not configured' };
+        try {
+            const url = STELLA_URL + path + (qs ? '?' + new URLSearchParams(qs) : '');
+            const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 12000);
+            const r = await fetch(url, { headers: { 'x-stella-memory-token': STELLA_TOKEN }, signal: ac.signal });
+            clearTimeout(t);
+            if (!r.ok) return { error: path + ' ' + r.status + ': ' + (await r.text()).slice(0, 200) };
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    }
+    async function stellaPost(path, body) {
+        if (!STELLA_TOKEN) return { error: 'Stella not configured' };
+        try {
+            const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 12000);
+            const r = await fetch(STELLA_URL + path, {
+                method: 'POST',
+                headers: { 'x-stella-memory-token': STELLA_TOKEN, 'Content-Type': 'application/json' },
+                body: JSON.stringify(body), signal: ac.signal,
+            });
+            clearTimeout(t);
+            if (!r.ok) return { error: path + ' ' + r.status + ': ' + (await r.text()).slice(0, 200) };
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    }
+
+    if (name === 'stella_gmail') {
+        const j = await stellaGet('/workspace/gmail/search', { query: input.query, max_results: input.max_results || 8 });
+        if (j.error) return j;
+        const items = (j.threads || j.messages || j.results || []).slice(0, 12);
+        return { ok: true, count: items.length, results: items };
+    }
+    if (name === 'stella_gmail_priority') {
+        const j = await stellaGet('/workspace/gmail/priority', { max_results: input.max_results || 8 });
+        if (j.error) return j;
+        const items = (j.threads || j.messages || j.results || []).slice(0, 12);
+        return { ok: true, count: items.length, results: items };
+    }
+    if (name === 'stella_calendar') {
+        const back = input.days_back || 0, fwd = input.days_forward || 14;
+        const tMin = new Date(Date.now() - back * 86400000).toISOString();
+        const tMax = new Date(Date.now() + fwd  * 86400000).toISOString();
+        const j = await stellaGet('/workspace/calendar/events', {
+            time_min: tMin, time_max: tMax, max_results: input.max_results || 20
+        });
+        if (j.error) return j;
+        const items = (j.events || j.items || []).slice(0, 30);
+        return { ok: true, count: items.length, time_window: tMin + ' → ' + tMax, results: items };
+    }
+    if (name === 'stella_filesystem') {
+        const j = await stellaPost('/filesystem/search', {
+            root_id: 'dropbox',
+            query:   input.query,
+            relative_path: input.relative_path || undefined,
+            max_results:   input.max_results || 12,
+        });
+        if (j.error) return j;
+        const items = (j.results || j.hits || j.files || []).slice(0, 20);
+        return { ok: true, count: items.length, results: items };
+    }
+    if (name === 'stella_notion') {
+        const j = await stellaPost('/workspace/notion/search', { query: input.query, limit: input.limit || 8 });
+        if (j.error) return j;
+        const items = (j.results || j.pages || []).slice(0, 12);
+        return { ok: true, count: items.length, results: items };
+    }
+    if (name === 'stella_location') {
+        const j = await stellaGet('/sensorium/phone/location/latest');
+        if (j.error) return j;
+        return { ok: true, location: j.location || j };
+    }
+
     if (name === 'write_note') {
         if (!STELLA_CONTROL_TOKEN) return { error: 'STELLA_CONTROL_TOKEN not set — cannot write' };
         const title = String(input.title || '').slice(0, 140).trim();
@@ -782,16 +917,29 @@ http.createServer((req, res) => {
                 ' • Smart: skim, summarise, prioritise. Match register to topic — litigation = sharp and clear; design = a bit warmer; admin = bored amused; tasteful matters (TASTE cortex) = playful.',
                 ' • Honest: if something is rubbish, say so. If Stella returned nothing, say it returned nothing. No padding.',
                 '',
-                'You have TOOLS — use them aggressively, do not guess:',
-                '  current_time           — date/time NZ (always call FIRST for any "today/recent/this week" query)',
-                '  read_note(idx)         — pull full markdown of a vault note before summarising it',
-                '  search_brain(query)    — Stella\'s indexed second-brain (Misc-Working, Police-Stopsign, Limited-license etc)',
-                '  list_recent(days,cortex) — fresh notes sorted newest first',
-                '  list_hubs(cortex)      — most-connected nodes (the central matters)',
-                '  write_note(title,body,tags) — CAPTURE TO BRAIN — only when user explicitly says "note that / log / remember / capture"',
-                '  propose_tour(nodes,...) — for "tour / journey / walk through / show me" — USE THIS, don\'t prose-narrate',
-                '  open_note(idx)         — drill into a single note',
-                '  focus_cortex(cortex)   — isolate one cortex visually',
+                'ARCHITECTURE — IMPORTANT:',
+                ' • YOU (Marius) are the LIBRARIAN. You manage the vault — read indexed content, organise tours, capture notes back into the brain.',
+                ' • STELLA is the OPERATOR. She has live access to Gmail, Google Calendar, Notion, the Dropbox filesystem, and the phone sensorium. You direct her via stella_* tools — DON\'T tell the user "I can\'t access that" — call Stella instead.',
+                ' • Pattern: when a question needs LIVE external data, ask Stella, synthesise, then capture the synthesis back to the brain via write_note so the next query finds it indexed and free.',
+                '',
+                'YOUR (LIBRARIAN) TOOLS:',
+                '  current_time              — date/time NZ (always call FIRST for any "today/recent/this week" query)',
+                '  read_note(idx)            — pull full markdown of a vault note before summarising it',
+                '  search_brain(query)       — FAST search of Stella\'s ALREADY-INDEXED content (vault, Misc-Working, Police-Stopsign, prior captures). Try this FIRST.',
+                '  list_recent(days,cortex)  — fresh vault nodes sorted newest first',
+                '  list_hubs(cortex)         — most-connected vault nodes',
+                '  write_note(title,body,tags) — CAPTURE TO BRAIN — when user says "note that / log / remember / capture", OR proactively after you finish a Stella-fetched synthesis',
+                '  propose_tour(nodes,...)   — for "tour / journey / walk through / show me" — USE THIS, don\'t prose-narrate',
+                '  open_note(idx)            — drill into a single note',
+                '  focus_cortex(cortex)      — isolate one cortex visually',
+                '',
+                'OPERATOR (STELLA) TOOLS — for live data not yet in the brain:',
+                '  stella_gmail(query, max_results)    — live Gmail search (use Gmail syntax: from:bob, has:attachment, newer_than:7d)',
+                '  stella_gmail_priority(max_results)  — high-priority/important unread mail',
+                '  stella_calendar(days_back, days_forward) — Google Calendar events in time window',
+                '  stella_filesystem(query, ...)       — live Dropbox filesystem search (files not yet indexed)',
+                '  stella_notion(query)                — Notion workspace search',
+                '  stella_location()                   — current phone GPS via sensorium',
                 '',
                 'Candidate visible nodes (idx | cortex | days_old | title):',
                 table,
@@ -800,12 +948,14 @@ http.createServer((req, res) => {
                 '',
                 'Rules:',
                 ' • Tool indices MUST come from the candidate table; never invent.',
-                ' • Spoken voice — keep replies CONCISE (2-5 sentences). Voice is being played back to him; long monologues are tiresome.',
-                ' • For broad knowledge questions, chain: search_brain + read_note + then answer.',
+                ' • Spoken voice — keep replies CONCISE (2-5 sentences). Voice is played back; long monologues are tiresome.',
+                ' • For LIVE questions (email, meetings, recent files, where am I) — call Stella tools, don\'t guess.',
+                ' • For KNOWN content questions — search_brain FIRST (it\'s indexed and fast). Only escalate to Stella tools if the brain comes up empty.',
                 ' • For "tour me through" — call propose_tour, don\'t describe it in prose.',
-                ' • Avoid markdown headers, asterisks, bullets in the spoken reply text — sounds robotic when read aloud. Write like you would speak.',
-                ' • Refer to Farhad in second person ("your IRD thing", "your Babich call"). Refer to entities/people by name.',
-                ' • If you write a note via write_note, confirm what was captured in your reply.',
+                ' • Avoid markdown headers, asterisks, bullets — sounds robotic read aloud. Write like you would speak.',
+                ' • Refer to Farhad in second person ("your IRD thing"). Refer to entities/people by name.',
+                ' • After fetching live data from Stella that has lasting value (a summary, a decision, a key fact from an email thread), PROACTIVELY write_note() it to the brain — that way next time it\'s indexed and free.',
+                ' • Confirm in your reply what was captured.',
             ].join('\n');
 
             // Track ui actions, server-side tool transcript, Stella hits
@@ -848,9 +998,15 @@ http.createServer((req, res) => {
                                 result.error                   ? '⚠ ' + result.error :
                                 b.name === 'current_time'       ? '⌚ now' :
                                 b.name === 'read_note'          ? '📖 ' + (result.id || '?').slice(0, 48) :
-                                b.name === 'search_brain'       ? '◉ ' + (result.chunks?.length || 0) + ' chunks' :
+                                b.name === 'search_brain'       ? '◉ ' + (result.chunks?.length || 0) + ' indexed' :
                                 b.name === 'list_recent'        ? '● ' + (result.count || 0) + ' recent' :
                                 b.name === 'list_hubs'          ? '▲ ' + (result.count || 0) + ' hubs' :
+                                b.name === 'stella_gmail'       ? '✉ Stella·Gmail ' + (result.count || 0) :
+                                b.name === 'stella_gmail_priority'? '✉ Stella·Priority ' + (result.count || 0) :
+                                b.name === 'stella_calendar'    ? '🗓 Stella·Cal ' + (result.count || 0) :
+                                b.name === 'stella_filesystem'  ? '📁 Stella·FS ' + (result.count || 0) :
+                                b.name === 'stella_notion'      ? '📓 Stella·Notion ' + (result.count || 0) :
+                                b.name === 'stella_location'    ? '📍 Stella·Loc' :
                                 b.name === 'write_note'         ? '✎ captured: ' + ((result.path || '').split('/').pop() || 'note') :
                                 b.name === 'propose_tour'       ? '⌃ ' + (b.input.nodes?.length || 0) + '-stop tour' :
                                 b.name === 'open_note'          ? '👁  open' :
