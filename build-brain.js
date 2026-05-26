@@ -65,6 +65,7 @@ const LOBES = {
     DESIGN:         { center: [-180,  -90, -350 ], radius: 260, color: '#ffd28a', hex: 0xffd28a },  // soft amber
     ADMINISTRATION: { center: [ 130,  370,  -20 ], radius: 230, color: '#8ee0ff', hex: 0x8ee0ff },  // soft sky
     RESEARCH:       { center: [ 280,  -90,  180 ], radius: 170, color: '#5af0e8', hex: 0x5af0e8 },  // turquoise
+    LIGHTSPEED:     { center: [   0,   90, -380 ], radius: 180, color: '#b48cff', hex: 0xb48cff },  // electric violet
     CONTACTS:       { center: [-420,   65,   60 ], radius: 130, color: '#ee9ce6', hex: 0xee9ce6 },  // soft pink
     PEOPLE:         { center: [-300,  210,  120 ], radius: 160, color: '#ffb380', hex: 0xffb380 },  // warm peach
     TASTE:          { center: [-280, -200,  260 ], radius: 150, color: '#ff9ec7', hex: 0xff9ec7 },  // warm coral pink
@@ -632,6 +633,7 @@ canvas{display:block;width:100%!important;height:100%!important}
     <div class="legend-row" data-cat="DESIGN"><span style="color:#ffd28a">●</span> DESIGN</div>
     <div class="legend-row" data-cat="ADMINISTRATION"><span style="color:#8ee0ff">●</span> ADMINISTRATION</div>
     <div class="legend-row" data-cat="RESEARCH"><span style="color:#5af0e8">●</span> RESEARCH</div>
+    <div class="legend-row" data-cat="LIGHTSPEED"><span style="color:#b48cff">●</span> LIGHTSPEED</div>
     <div class="legend-row" data-cat="PEOPLE"><span style="color:#ffb380">●</span> PEOPLE</div>
     <div class="legend-row" data-cat="CONTACTS"><span style="color:#ee9ce6">●</span> CONTACTS</div>
     <div class="legend-row" data-cat="TASTE"><span style="color:#ff9ec7">●</span> TASTE</div>
@@ -2649,6 +2651,7 @@ const defaults = {
     cDESIGN:         true,
     cADMINISTRATION: true,
     cRESEARCH:       true,
+    cLIGHTSPEED:     true,
     cPEOPLE:         true,
     cCONTACTS:       true,
     cTASTE:          true,
@@ -2765,11 +2768,11 @@ fLay.add(params, 'showAmbient').name('void dust').onChange(v => { ambient.visibl
 
 // ── CORTEXES folder (per-bucket toggles) ─────────────────────
 const fCor = gui.addFolder('Cortex Filter');
-['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(cat => {
+['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','LIGHTSPEED','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(cat => {
     fCor.add(params, 'c' + cat).name(cat).onChange(applyAll);
 });
-fCor.add({ all:  () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = true); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'all').name('✓ show all');
-fCor.add({ none: () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = false); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'none').name('✗ hide all');
+fCor.add({ all:  () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','LIGHTSPEED','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = true); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'all').name('✓ show all');
+fCor.add({ none: () => { ['PROJECTS','LITIGATION','DESIGN','ADMINISTRATION','RESEARCH','LIGHTSPEED','PEOPLE','CONTACTS','TASTE','ARCHIVES','MISC'].forEach(c => params['c'+c] = false); gui.controllersRecursive().forEach(ct => ct.updateDisplay()); applyAll(); } }, 'none').name('✗ hide all');
 
 // ── CAMERA folder ────────────────────────────────────────────
 const fCam = gui.addFolder('Camera');

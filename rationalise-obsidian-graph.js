@@ -22,6 +22,7 @@ const COLORS = {
     DESIGN:         C('ffd28a'),
     ADMINISTRATION: C('8ee0ff'),
     RESEARCH:       C('5af0e8'),
+    LIGHTSPEED:     C('b48cff'),
     PEOPLE:         C('ffb380'),
     CONTACTS:       C('ee9ce6'),
     TASTE:          C('ff9ec7'),
@@ -76,6 +77,9 @@ const newCfg = {
 
         // RESEARCH — intelligence work, briefings (before ADMIN so Citadel-Intel wins)
         { query: 'path:Citadel-Intel OR briefing OR thesis OR perplexity',                              color: { a: 1, rgb: COLORS.RESEARCH       } },
+
+        // LIGHTSPEED — Citadel AI infrastructure: agents, automations, skills
+        { query: 'path:Lightspeed OR path:"Citadel-AI" OR path:"Citadel Group AI Assets" OR path:"Stella-Agent" OR Nimbalyst OR agent OR automation OR skill', color: { a: 1, rgb: COLORS.LIGHTSPEED } },
 
         // PEOPLE — individual person files (must be before CONTACTS so /people/ wins)
         { query: 'path:people',                                                                         color: { a: 1, rgb: COLORS.PEOPLE         } },

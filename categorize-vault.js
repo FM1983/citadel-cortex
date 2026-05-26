@@ -14,7 +14,7 @@ const { records } = JSON.parse(fs.readFileSync(IN, 'utf8'));
 console.log(`\n🧬 Categorizing ${records.length} records…`);
 
 // ─── Deterministic categorization ────────────────────────────────────────────
-const CATEGORIES = ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','ADMINISTRATION','TASTE','ARCHIVES','MISC'];
+const CATEGORIES = ['PROJECTS','LITIGATION','PEOPLE','CONTACTS','DESIGN','RESEARCH','LIGHTSPEED','ADMINISTRATION','TASTE','ARCHIVES','MISC'];
 
 function categorize(rec) {
     const p = (rec.relPath || '').toLowerCase();
@@ -62,11 +62,27 @@ function categorize(rec) {
         p.includes('masterplan') || p.includes('architect') || p.includes('drawing') ||
         p.includes('/plans/') || p.includes('blueprint') || p.includes('scheme')) return 'DESIGN';
 
+    // LIGHTSPEED — Citadel AI infrastructure: agents, automations, skills, prompts
+    // Captured BEFORE PROJECTS so Lightspeed/ doesn't fall into property-projects bucket,
+    // and BEFORE ADMINISTRATION so Citadel-AI / AI Assets win over generic admin.
+    if (p.startsWith('lightspeed/')        || p.includes('/lightspeed/')         ||
+        p.startsWith('citadel-ai/')        || p.includes('/citadel-ai/')         ||
+        p.includes('citadel group ai assets') ||
+        p.startsWith('stella-agent/')      || p.includes('/stella-agent/')       ||
+        p.includes('nimbalyst')            || p.includes('/cortex/')             ||
+        p.includes('/agents/')             || p.includes('/agent/')              ||
+        p.includes('/automations/')        || p.includes('/automation/')         ||
+        p.includes('/skills/')             || p.includes('/prompts/')            ||
+        p.includes('citadel-intel-notionbuild') ||
+        p.includes('/copilot/')            ||
+        t.startsWith('agent:')             || t.startsWith('skill:')             ||
+        t.startsWith('prompt:')            || t.startsWith('automation:')) return 'LIGHTSPEED';
+
     // PROJECTS — live projects, acquisitions, named property deals
     if (p.startsWith('projects/01') || p.includes('/projects/01') ||
         p.includes('business acquisitions') || p.includes('acquisitions') ||
         p.includes('babich') || p.includes('featherston') || p.includes('mclane') ||
-        p.includes('bealey') || p.includes('lightspeed') || p.includes('castra') ||
+        p.includes('bealey') || p.includes('castra') ||
         p.includes('carrack') || p.includes('hyperion') || p.includes('barbarossa') ||
         p.startsWith('projects/')) return 'PROJECTS';
 
