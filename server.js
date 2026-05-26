@@ -54,7 +54,115 @@ if (!ANTHROPIC_KEY) {
         } catch (e) {}
     }
 }
-const CHAT_MODEL = process.env.CHAT_MODEL || 'claude-haiku-4-5';
+const CHAT_MODEL = process.env.CHAT_MODEL || 'claude-sonnet-4-5';
+const CHAT_MAX_TURNS = parseInt(process.env.CHAT_MAX_TURNS || '6', 10);
+
+// ── Tool definitions for the agentic navigator loop ────────────────────────
+const NAVIGATOR_TOOLS = [
+    {
+        name: 'read_note',
+        description: "Read the full markdown content of one vault note. Use this when the user asks 'what does X say', when you need to summarise content, when comparing two matters, or when a candidate title alone is not enough to answer. Returns the note's text (first ~8 KB). Pass the integer idx from the candidate table.",
+        input_schema: {
+            type: 'object',
+            properties: { idx: { type: 'integer', description: 'Node index from the candidate table' } },
+            required: ['idx'],
+        },
+    },
+    {
+        name: 'search_brain',
+        description: "Search Stella's second-brain (Citadel's institutional memory) for additional context not captured in the candidate node list. Returns up to 6 relevant snippets with source labels. Use when the user asks something the visible vault may not fully answer.",
+        input_schema: {
+            type: 'object',
+            properties: { query: { type: 'string', description: 'Natural-language search query' } },
+            required: ['query'],
+        },
+    },
+    {
+        name: 'propose_tour',
+        description: "Propose a guided 3D camera tour through a sequence of 3–8 vault nodes. The user will see a play button; when they click it, the camera flies through each node and opens the side panel. Use this whenever the user asks for a tour, walk-through, journey, or overview.",
+        input_schema: {
+            type: 'object',
+            properties: {
+                nodes:    { type: 'array', items: { type: 'integer' }, description: '3-8 node indices in tour order' },
+                captions: { type: 'array', items: { type: 'string' },  description: 'One-line caption per stop; same length as nodes' },
+                intro:    { type: 'string', description: 'Short narrative intro shown at the top of the tour' },
+            },
+            required: ['nodes', 'captions'],
+        },
+    },
+    {
+        name: 'open_note',
+        description: "Open one specific note in the side panel (camera flies to it). Use when the user asks to focus on a single note without a tour.",
+        input_schema: {
+            type: 'object',
+            properties: { idx: { type: 'integer' } },
+            required: ['idx'],
+        },
+    },
+    {
+        name: 'focus_cortex',
+        description: "Visually isolate one cortex (dim all others), or 'ALL' to clear.",
+        input_schema: {
+            type: 'object',
+            properties: { cortex: { type: 'string', enum: ['PROJECTS','LITIGATION','CONTACTS','DESIGN','RESEARCH','ADMINISTRATION','ARCHIVES','MISC','ALL'] } },
+            required: ['cortex'],
+        },
+    },
+];
+
+async function executeNavigatorTool(name, input, candidateLookup) {
+    if (name === 'read_note') {
+        const cand = candidateLookup[input.idx];
+        if (!cand) return { error: 'idx ' + input.idx + ' not in candidates' };
+        if (!cand.path) return { error: 'no file path for that node' };
+        const full = safeVaultPath(cand.path);
+        if (!full || !fs.existsSync(full)) return { error: 'file not found: ' + cand.path };
+        try {
+            const content = fs.readFileSync(full, 'utf8');
+            // strip frontmatter for cleaner reasoning
+            const stripped = content.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '');
+            return {
+                ok: true, idx: input.idx, id: cand.id, path: cand.path,
+                content: stripped.slice(0, 8000),
+                truncated: stripped.length > 8000,
+            };
+        } catch (e) { return { error: e.message }; }
+    }
+    if (name === 'search_brain') {
+        const r = await queryStella(input.query);
+        if (!r) return { error: 'Stella not configured' };
+        if (r.error) return { error: r.error, chunks: [] };
+        return { ok: true, endpoint: r.endpoint, chunks: r.chunks };
+    }
+    // UI tools — recorded for client to execute
+    if (name === 'propose_tour' || name === 'open_note' || name === 'focus_cortex') {
+        return { ok: true, recorded: true, ui_action: { tool: name, params: input } };
+    }
+    return { error: 'unknown tool ' + name };
+}
+
+async function callAnthropic(messages, system) {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+            'x-api-key': ANTHROPIC_KEY,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+            model: CHAT_MODEL,
+            max_tokens: 1800,
+            system,
+            messages,
+            tools: NAVIGATOR_TOOLS,
+        }),
+    });
+    if (!r.ok) {
+        const errTxt = await r.text();
+        throw new Error('Anthropic ' + r.status + ': ' + errTxt.slice(0, 300));
+    }
+    return await r.json();
+}
 
 // ── STELLA-AGENT integration (read-only memory + brain search) ─────────────
 const STELLA_URL   = process.env.STELLA_URL || 'http://100.69.150.90:8790';
@@ -249,7 +357,7 @@ http.createServer((req, res) => {
     }
     if (url === '/api/rebuild-status') return sendJSON(res, 200, rebuildJob || { idle: true });
 
-    // ── /api/chat — Claude-backed navigator ─────────────────────────────────
+    // ── /api/chat — agentic navigator (multi-turn + tool use) ────────────────
     if (url === '/api/chat' && req.method === 'POST') {
         if (!ANTHROPIC_KEY) return sendJSON(res, 503, { error: 'Set ANTHROPIC_API_KEY env var or put it in ~/.hermes/.env' });
         let body = '';
@@ -257,89 +365,108 @@ http.createServer((req, res) => {
         req.on('end', async () => {
             let parsed;
             try { parsed = JSON.parse(body); } catch { return sendJSON(res, 400, { error: 'invalid JSON body' }); }
-            const { message, candidates } = parsed;
-            if (!message || !Array.isArray(candidates)) return sendJSON(res, 400, { error: 'missing message or candidates' });
+            const { messages, candidates } = parsed;
+            if (!Array.isArray(messages) || !messages.length || !Array.isArray(candidates))
+                return sendJSON(res, 400, { error: 'missing messages[] or candidates[]' });
 
-            // build the table the LLM sees — strict, terse, deterministic
-            const table = candidates.slice(0, 100).map(c =>
+            // build candidate table + lookup
+            const slice = candidates.slice(0, 100);
+            const table = slice.map(c =>
                 c.idx + '\t' + (c.cat || '').slice(0, 5).padEnd(5) + '\t' +
                 (typeof c.daysOld === 'number' ? c.daysOld + 'd' : '—').padStart(5) + '\t' +
                 String(c.id).slice(0, 88)
             ).join('\n');
-
-            // ── Stella memory enrichment (parallel, optional) ──────────────
-            const stellaResult = STELLA_TOKEN ? await queryStella(message) : null;
-            let stellaBlock = '';
-            if (stellaResult && stellaResult.chunks && stellaResult.chunks.length) {
-                stellaBlock =
-                    '\n\nADDITIONAL CONTEXT (from STELLA, the second-brain agent):\n' +
-                    stellaResult.chunks.map((c, i) =>
-                        '[' + (i+1) + '] ' + (c.source ? '(' + c.source.slice(0,40) + ') ' : '') +
-                        String(c.text || '').replace(/\s+/g, ' ').slice(0, 320)
-                    ).join('\n\n') +
-                    '\n\nYou may reference this context in your summary, but the tour must still come from the candidate node indices above.';
-            }
+            const candidateLookup = {};
+            for (const c of slice) candidateLookup[c.idx] = c;
 
             const systemPrompt = [
-                'You are the navigator for a 3D knowledge-graph visualisation of an Obsidian vault.',
-                'A user asks a plain-English question; you choose a coherent set of nodes to visit and write a tour.',
+                'You are CITADEL NAVIGATOR — an agentic guide for Farhad Moinfar through his Citadel Capital knowledge vault, rendered as a 3D neural visualisation.',
                 '',
-                'Candidate nodes  (idx | cortex | days_old | title):',
+                'You have TOOLS available — use them aggressively:',
+                ' • read_note(idx)      — pull the full text of a note when you need to actually understand or summarise it',
+                ' • search_brain(query) — query Stella, the second-brain agent, for institutional memory beyond what is visible',
+                ' • propose_tour(nodes, captions, intro) — when the user wants a journey/walk-through/overview, USE THIS — do not just describe the tour in prose',
+                ' • open_note(idx)      — when the user wants to focus on one specific note',
+                ' • focus_cortex(cat)   — when the user wants to isolate one category visually',
+                '',
+                'Candidate visible nodes (idx | cortex | days_old | title):',
                 table,
-                stellaBlock,
                 '',
-                'Cortexes are: PROJECTS, LITIG (litigation), DESIG (design), ADMIN (administration), RESEA (research), CONTA (contacts), ARCHI (archives), MISC.',
-                '',
-                'Return ONLY a single JSON object with this exact shape, no prose, no markdown fence:',
-                '{',
-                '  "summary":   "2-4 sentence narrative overview of what we will see and why",',
-                '  "tour":      [ { "idx": <int from the table>, "note": "one-sentence reason this node is on the tour" }, ... ],',
-                '  "follow_up": ["short related question 1", "short related question 2"]',
-                '}',
+                'Cortexes: PROJECTS, LITIGATION, DESIGN, ADMINISTRATION, RESEARCH, CONTACTS, ARCHIVES, MISC.',
                 '',
                 'Rules:',
-                ' - Pick 4–8 nodes unless the user explicitly asks for more or fewer',
-                ' - Order them as a coherent narrative — chronological, hub-first, or grouped by sub-theme',
-                ' - Only use idx values from the candidate table. Never invent IDs.',
-                ' - If no candidate fits, return {"summary": "explanation", "tour": [], "follow_up": ["..."]}',
-                ' - Be terse. Notes 1 line max. Summary 2-4 sentences max.',
+                ' • Tool indices must come from the candidate table; never invent.',
+                ' • For "tour me through X" / "show me Y" — call propose_tour with 4–8 nodes and a brief intro.',
+                ' • For "what does X say" / "summarise" / "compare" — call read_note first, then answer from the actual content.',
+                ' • For broad "what do we know about X" — try search_brain too, then synthesise.',
+                ' • Keep the final assistant message concise (2–6 sentences). Tools do the heavy lifting.',
+                ' • Be honest if Stella is offline or returns nothing — the user wants the truth, not padding.',
+                ' • Refer to Farhad in second person ("you"); refer to people / entities by their names.',
             ].join('\n');
 
+            // Track ui actions, server-side tool transcript, Stella hits
+            const uiActions = [];
+            const transcript = [];   // [{tool, input, summary}]
+            let stellaUsed = 0;
+
+            // ── agentic loop ────────────────────────────────────────────
+            let conv = messages.map(m => ({ role: m.role, content: m.content }));
+            let finalText = '';
             try {
-                const r = await fetch('https://api.anthropic.com/v1/messages', {
-                    method: 'POST',
-                    headers: {
-                        'x-api-key': ANTHROPIC_KEY,
-                        'anthropic-version': '2023-06-01',
-                        'content-type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        model: CHAT_MODEL,
-                        max_tokens: 900,
-                        system: systemPrompt,
-                        messages: [{ role: 'user', content: message }],
-                    }),
-                });
-                if (!r.ok) {
-                    const errTxt = await r.text();
-                    return sendJSON(res, 502, { error: 'Anthropic ' + r.status + ': ' + errTxt.slice(0, 240) });
+                for (let turn = 0; turn < CHAT_MAX_TURNS; turn++) {
+                    const j = await callAnthropic(conv, systemPrompt);
+                    const stop = j.stop_reason;
+                    const blocks = j.content || [];
+
+                    // collect text
+                    const txt = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+                    if (txt) finalText = txt;   // keep latest text from the model
+
+                    if (stop !== 'tool_use') {
+                        // end of turn — we're done
+                        break;
+                    }
+
+                    // assistant message with tool_use blocks goes into the conversation as-is
+                    conv.push({ role: 'assistant', content: blocks });
+
+                    // execute each tool, collect results
+                    const toolResults = [];
+                    for (const b of blocks) {
+                        if (b.type !== 'tool_use') continue;
+                        const result = await executeNavigatorTool(b.name, b.input, candidateLookup);
+                        if (b.name === 'search_brain' && result.chunks) stellaUsed += result.chunks.length;
+                        if (result.ui_action) uiActions.push(result.ui_action);
+                        transcript.push({
+                            tool: b.name,
+                            input: b.input,
+                            summary:
+                                result.error                   ? '⚠ ' + result.error :
+                                b.name === 'read_note'          ? '📖 ' + (result.id || '?').slice(0, 48) :
+                                b.name === 'search_brain'       ? '◉ ' + (result.chunks?.length || 0) + ' chunks' :
+                                b.name === 'propose_tour'       ? '⌃ ' + (b.input.nodes?.length || 0) + '-stop tour' :
+                                b.name === 'open_note'          ? '👁  open' :
+                                b.name === 'focus_cortex'       ? '◐ focus ' + b.input.cortex :
+                                'ok',
+                        });
+                        toolResults.push({
+                            type: 'tool_result',
+                            tool_use_id: b.id,
+                            content: JSON.stringify(result).slice(0, 9000),   // cap to prevent runaway
+                        });
+                    }
+                    conv.push({ role: 'user', content: toolResults });
                 }
-                const j = await r.json();
-                const txt = j.content?.[0]?.text || '';
-                // extract leading JSON object
-                const m = txt.match(/\{[\s\S]*\}/);
-                if (!m) return sendJSON(res, 200, { summary: txt, tour: [], follow_up: [], raw: true });
-                let plan;
-                try { plan = JSON.parse(m[0]); } catch (e) {
-                    return sendJSON(res, 200, { summary: txt, tour: [], follow_up: [], raw: true, parseError: e.message });
-                }
-                plan.stella = stellaResult
-                    ? { chunks: stellaResult.chunks?.length || 0, error: stellaResult.error }
-                    : null;
-                sendJSON(res, 200, plan);
             } catch (e) {
-                sendJSON(res, 500, { error: e.message });
+                return sendJSON(res, 500, { error: e.message, partial: finalText, transcript });
             }
+
+            sendJSON(res, 200, {
+                text: finalText || '(no response)',
+                actions: uiActions,
+                transcript,
+                stella: { chunks: stellaUsed },
+            });
         });
         return;
     }

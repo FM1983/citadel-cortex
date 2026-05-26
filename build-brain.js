@@ -470,6 +470,9 @@ canvas{display:block;width:100%!important;height:100%!important}
 .cm-bot{color:rgba(220,235,250,.92);margin-bottom:14px;background:rgba(122,255,196,.07);padding:10px 12px;border-left:2px solid rgba(122,255,196,.4);border-radius:0 3px 3px 0}
 .cm-loading{color:rgba(122,255,196,.6);font-style:italic;animation:blink 1.2s infinite}
 .cm-error{color:#ff7a99;font-style:italic}
+.cm-trans{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.cm-trans-tag{font-size:8.5px;letter-spacing:1.5px;color:#aaccdd;background:rgba(140,200,230,.10);border:1px solid rgba(140,200,230,.25);padding:2px 7px;border-radius:10px}
+.cm-text{margin-top:4px}
 .cm-tour{margin-top:10px;display:flex;flex-direction:column;gap:5px;padding-top:8px;border-top:1px dashed rgba(122,255,196,.18)}
 .cm-stop{display:flex;gap:6px;margin-top:6px;font-size:9px;letter-spacing:1px}
 .cm-tour-step{display:flex;gap:8px;cursor:pointer;padding:5px 7px;border-radius:2px;background:rgba(140,200,230,.04);transition:background .12s}
@@ -612,7 +615,10 @@ canvas{display:block;width:100%!important;height:100%!important}
 <div id="chat">
   <header>
     <span class="ct">⌃ CITADEL NAVIGATOR</span>
-    <button class="cc" id="chat-close">✕</button>
+    <div style="display:flex;gap:4px">
+      <button class="cc" id="chat-new" title="new conversation" style="font-size:12px;color:#7affc4">↺</button>
+      <button class="cc" id="chat-close">✕</button>
+    </div>
   </header>
   <div id="chat-log"></div>
   <form id="chat-form">
@@ -1496,13 +1502,11 @@ function showCortexInfo(cat) {
     // wire buttons
     root.querySelector('[data-act="tour-recent"]').addEventListener('click', () => {
         openChat();
-        document.getElementById('chat-input').value = 'commence a tour through recent ' + cat.toLowerCase() + ' matters';
-        chatSubmit();
+        chatSubmit('commence a tour through recent ' + cat.toLowerCase() + ' matters');
     });
     root.querySelector('[data-act="tour-hubs"]').addEventListener('click', () => {
         openChat();
-        document.getElementById('chat-input').value = 'tour the most central / most-connected ' + cat.toLowerCase() + ' notes';
-        chatSubmit();
+        chatSubmit('tour the most central / most-connected ' + cat.toLowerCase() + ' notes');
     });
     root.querySelector('[data-act="isolate"]').addEventListener('click', () => {
         isolated = (isolated === cat) ? null : cat;
@@ -1789,87 +1793,131 @@ function preFilter(message) {
     return scored.slice(0, 100).map(x => x[0]);
 }
 
-let chatHistory = [];
+let chatHistory = [];   // UI render history
+let chatConv    = [];   // canonical message history sent to Anthropic
+
+function esc(s){ return String(s).replace(/[<>&"]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+
 function chatRender() {
     const log = document.getElementById('chat-log');
     log.innerHTML = chatHistory.map(msg => {
         if (msg.kind === 'user')    return '<div class="cm-user">' + esc(msg.text) + '</div>';
         if (msg.kind === 'loading') return '<div class="cm-bot cm-loading">thinking…</div>';
         if (msg.kind === 'error')   return '<div class="cm-bot cm-error">' + esc(msg.text) + '</div>';
-        // bot reply with optional tour
+
+        // ── BOT reply ──
         let html = '<div class="cm-bot">';
+        // tool transcript badges
+        if (msg.transcript && msg.transcript.length) {
+            html += '<div class="cm-trans">';
+            for (const t of msg.transcript) {
+                html += '<span class="cm-trans-tag">' + esc(t.summary || t.tool) + '</span>';
+            }
+            html += '</div>';
+        }
         if (msg.stella && msg.stella.chunks > 0) {
             html += '<div style="font-size:8.5px;letter-spacing:2px;color:#7affc4;margin-bottom:6px">◉ STELLA · ' + msg.stella.chunks + ' chunks</div>';
         }
-        html += esc(msg.text);
-        if (msg.tour && msg.tour.length) {
-            html += '<div class="cm-tour">' + msg.tour.map((t, k) =>
-                '<div class="cm-tour-step" data-idx="' + t.idx + '">' +
-                  '<span class="cm-tour-num">' + (k+1) + '</span>' +
-                  '<div><span class="cm-tour-id">' + esc((DATA.ids[t.idx] || '?').slice(0,46)) + '</span>' +
-                  '<span class="cm-tour-note">' + esc(t.note || '') + '</span></div>' +
-                '</div>'
-            ).join('') + '</div>' +
-            '<div class="cm-tour-actions"><button data-act="play" data-mid="' + msg.id + '">▶ play tour</button></div>';
-        }
-        if (msg.follow_up && msg.follow_up.length) {
-            html += '<div class="cm-followup">' + msg.follow_up.map(q =>
-                '<button data-followup="' + esc(q) + '">' + esc(q) + '</button>'
-            ).join('') + '</div>';
+        html += '<div class="cm-text">' + esc(msg.text) + '</div>';
+
+        // ── render UI actions ──
+        for (const act of (msg.actions || [])) {
+            if (act.tool === 'propose_tour') {
+                const ns = act.params.nodes || [];
+                const caps = act.params.captions || [];
+                html +=
+                    '<div class="cm-tour"' + (act.params.intro ? ' title="' + esc(act.params.intro) + '"' : '') + '>' +
+                    ns.map((idx, k) =>
+                        '<div class="cm-tour-step" data-idx="' + idx + '">' +
+                          '<span class="cm-tour-num">' + (k+1) + '</span>' +
+                          '<div><span class="cm-tour-id">' + esc((DATA.ids[idx] || '?').slice(0,46)) + '</span>' +
+                          '<span class="cm-tour-note">' + esc(caps[k] || '') + '</span></div>' +
+                        '</div>'
+                    ).join('') + '</div>' +
+                    '<div class="cm-tour-actions"><button data-act="play" data-mid="' + msg.id + '" data-aidx="' + (msg.actions.indexOf(act)) + '">▶ play tour</button></div>';
+            } else if (act.tool === 'open_note') {
+                html += '<div class="cm-tour-actions"><button data-act="open" data-idx="' + act.params.idx + '">👁  open ' + esc((DATA.ids[act.params.idx] || '?').slice(0,30)) + '</button></div>';
+            } else if (act.tool === 'focus_cortex') {
+                html += '<div class="cm-tour-actions"><button data-act="focus" data-cat="' + esc(act.params.cortex) + '">◐ focus ' + esc(act.params.cortex) + '</button></div>';
+            }
         }
         html += '</div>';
         return html;
     }).join('');
     log.scrollTop = log.scrollHeight;
 
-    // wire up handlers
+    // wire handlers
     log.querySelectorAll('.cm-tour-step').forEach(el =>
-        el.addEventListener('click', () => { const idx = +el.getAttribute('data-idx'); selectByIndex(idx); }));
-    log.querySelectorAll('[data-followup]').forEach(b =>
-        b.addEventListener('click', () => { document.getElementById('chat-input').value = b.getAttribute('data-followup'); chatSubmit(); }));
+        el.addEventListener('click', () => { selectByIndex(+el.getAttribute('data-idx')); }));
     log.querySelectorAll('[data-act="play"]').forEach(b =>
         b.addEventListener('click', () => {
             const mid = +b.getAttribute('data-mid');
+            const ai  = +b.getAttribute('data-aidx');
             const msg = chatHistory.find(m => m.id === mid);
-            if (msg && msg.tour) playTour(msg.tour);
+            if (!msg) return;
+            const act = msg.actions[ai];
+            const ns  = act.params.nodes || [];
+            const caps = act.params.captions || [];
+            const tour = ns.map((idx, k) => ({ idx, note: caps[k] || '' }));
+            playTour(tour);
+        }));
+    log.querySelectorAll('[data-act="open"]').forEach(b =>
+        b.addEventListener('click', () => selectByIndex(+b.getAttribute('data-idx'))));
+    log.querySelectorAll('[data-act="focus"]').forEach(b =>
+        b.addEventListener('click', () => {
+            const c = b.getAttribute('data-cat');
+            if (c === 'ALL') { isolated = null; }
+            else { isolated = c; }
+            document.querySelectorAll('.legend-row').forEach(r =>
+                r.style.opacity = (!isolated || r.getAttribute('data-cat') === isolated) ? '1' : '.3');
+            applyIsolation();
         }));
 }
-function esc(s){ return String(s).replace(/[<>&"]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 
-async function chatSubmit() {
+async function chatSubmit(autoText) {
     const input = document.getElementById('chat-input');
-    const text = input.value.trim();
+    const text = (autoText != null ? autoText : input.value).trim();
     if (!text) return;
-    input.value = '';
+    if (autoText == null) input.value = '';
     chatHistory.push({ kind: 'user', text });
     chatHistory.push({ kind: 'loading' });
+    chatConv.push({ role: 'user', content: text });
     chatRender();
     try {
         const candidates = preFilter(text).map(i => ({
             idx: i, id: DATA.ids[i], cat: DATA.cats[i],
             daysOld: DATA.daysOld[i], degree: DATA.adj[i].length,
+            path: DATA.paths[i] || '',
         }));
         const r = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, candidates }),
+            body: JSON.stringify({ messages: chatConv, candidates }),
         });
         const j = await r.json();
         chatHistory.pop();   // remove loading
         if (j.error) {
             chatHistory.push({ kind: 'error', text: j.error });
+            chatConv.pop();   // remove the unanswered user turn so it doesn't pollute next call
         } else {
+            const replyText = j.text || '(no reply)';
+            const replyActions = (j.actions || []).filter(a => {
+                // sanitise idx-bearing actions
+                if (a.tool === 'open_note') return Number.isInteger(a.params?.idx) && a.params.idx >= 0 && a.params.idx < N;
+                if (a.tool === 'propose_tour') return Array.isArray(a.params?.nodes) && a.params.nodes.every(n => Number.isInteger(n) && n >= 0 && n < N);
+                return true;
+            });
             chatHistory.push({
-                kind: 'bot',
-                id: Date.now(),
-                text: j.summary || '(no summary)',
-                tour: (j.tour || []).filter(t => Number.isInteger(t.idx) && t.idx >= 0 && t.idx < N),
-                follow_up: j.follow_up || [],
+                kind: 'bot', id: Date.now(),
+                text: replyText, actions: replyActions,
+                transcript: j.transcript || [],
                 stella: j.stella || null,
             });
+            chatConv.push({ role: 'assistant', content: replyText });
         }
     } catch (e) {
         chatHistory.pop();
+        chatConv.pop();
         chatHistory.push({ kind: 'error', text: e.message });
     }
     chatRender();
@@ -1932,6 +1980,11 @@ function openChat() {
 function closeChat() { document.getElementById('chat').classList.remove('open'); }
 document.getElementById('chat-btn').addEventListener('click', openChat);
 document.getElementById('chat-close').addEventListener('click', closeChat);
+document.getElementById('chat-new').addEventListener('click', () => {
+    chatHistory = []; chatConv = [];
+    chatRender();
+    setTimeout(() => document.getElementById('chat-input').focus(), 50);
+});
 document.getElementById('chat-form').addEventListener('submit', e => { e.preventDefault(); chatSubmit(); });
 
 document.addEventListener('keydown', e => {
