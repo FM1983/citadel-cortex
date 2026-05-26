@@ -549,6 +549,7 @@ canvas{display:block;width:100%!important;height:100%!important}
     <div class="st">FIRING   <span id="sfire" style="color:#ff0">—</span></div>
     <div class="st">FOCUS    <span id="sf" style="color:#f0f">—</span></div>
     <div class="st">FPS      <span id="fp" style="color:#0f9">—</span></div>
+    <div class="st">STELLA   <span id="stella-status" style="color:#888">…</span></div>
   </div>
   <div id="sw"><input id="si" type="text" placeholder="SEARCH NEURON…" autocomplete="off"></div>
   <div class="panel" id="tr">
@@ -1000,7 +1001,6 @@ const SKY_VERT = \`
 \`;
 
 const SKY_FRAG = \`
-  precision highp float;
   uniform float uTime;
   uniform float uIntensity;
   uniform float uHue;
@@ -1008,129 +1008,92 @@ const SKY_FRAG = \`
   uniform float uPulse;
   varying vec3 vDir;
 
-  // ── hash / noise / fbm ─────────────────────────────────────
-  float hash(vec3 p){ p = fract(p * vec3(443.897, 441.423, 437.195)); p += dot(p, p.yzx + 19.19); return fract((p.x+p.y)*p.z); }
-  float h1(float x){ return fract(sin(x * 12.9898) * 43758.5453); }
+  float hash3(vec3 p){
+    p = fract(p * vec3(443.897, 441.423, 437.195));
+    p += dot(p, p.yzx + 19.19);
+    return fract((p.x + p.y) * p.z);
+  }
   float noise(vec3 p){
     vec3 i = floor(p), f = fract(p);
     f = f*f*(3.0 - 2.0*f);
-    return mix(mix(mix(hash(i+vec3(0,0,0)), hash(i+vec3(1,0,0)), f.x),
-                   mix(hash(i+vec3(0,1,0)), hash(i+vec3(1,1,0)), f.x), f.y),
-               mix(mix(hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)), f.x),
-                   mix(hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)), f.x), f.y), f.z);
+    float c000 = hash3(i + vec3(0.0,0.0,0.0));
+    float c100 = hash3(i + vec3(1.0,0.0,0.0));
+    float c010 = hash3(i + vec3(0.0,1.0,0.0));
+    float c110 = hash3(i + vec3(1.0,1.0,0.0));
+    float c001 = hash3(i + vec3(0.0,0.0,1.0));
+    float c101 = hash3(i + vec3(1.0,0.0,1.0));
+    float c011 = hash3(i + vec3(0.0,1.0,1.0));
+    float c111 = hash3(i + vec3(1.0,1.0,1.0));
+    return mix(mix(mix(c000, c100, f.x), mix(c010, c110, f.x), f.y),
+               mix(mix(c001, c101, f.x), mix(c011, c111, f.x), f.y), f.z);
   }
   float fbm(vec3 p){
     float v = 0.0, a = 0.5;
-    for(int i = 0; i < 6; i++){ v += a * noise(p); p *= 2.05; a *= 0.5; }
+    v += a * noise(p); p *= 2.05; a *= 0.5;
+    v += a * noise(p); p *= 2.05; a *= 0.5;
+    v += a * noise(p); p *= 2.05; a *= 0.5;
+    v += a * noise(p);
     return v;
   }
-  // domain-warped fbm → filament-like nebula structure
-  float warpedFbm(vec3 p){
-    vec3 q = vec3(fbm(p + vec3(0.0, 0.0, 0.0)),
-                  fbm(p + vec3(5.2, 1.3, -2.1)),
-                  fbm(p + vec3(-3.1, 4.4, 7.7)));
-    return fbm(p + 2.5 * q);
-  }
 
-  // blackbody-ish star palette by random hash
   vec3 starColor(float h){
-    // h ~ stellar class roll
-    vec3 hotBlue   = vec3(0.65, 0.78, 1.05);   // O / B
-    vec3 white     = vec3(1.0,  1.0,  1.0);    // A / F
-    vec3 sunYellow = vec3(1.0,  0.95, 0.78);   // G
-    vec3 orange    = vec3(1.0,  0.78, 0.50);   // K
-    vec3 red       = vec3(1.0,  0.58, 0.35);   // M giant
-    vec3 c = mix(hotBlue, white, smoothstep(0.0, 0.30, h));
-    c      = mix(c,        sunYellow, smoothstep(0.30, 0.55, h));
-    c      = mix(c,        orange,    smoothstep(0.55, 0.80, h));
-    c      = mix(c,        red,       smoothstep(0.80, 1.00, h));
+    vec3 cBlue  = vec3(0.65, 0.78, 1.05);
+    vec3 cWhite = vec3(1.0,  1.0,  1.0);
+    vec3 cYel   = vec3(1.0,  0.92, 0.74);
+    vec3 cRed   = vec3(1.0,  0.55, 0.32);
+    vec3 c = mix(cBlue, cWhite, smoothstep(0.0, 0.35, h));
+    c      = mix(c,    cYel,   smoothstep(0.35, 0.65, h));
+    c      = mix(c,    cRed,   smoothstep(0.65, 1.0,  h));
     return c;
   }
 
   vec3 hueShift(vec3 c, float h){
-    const mat3 toYIQ  = mat3(0.299, 0.587, 0.114, 0.596,-0.275,-0.321, 0.212,-0.523, 0.311);
-    const mat3 toRGB  = mat3(1.0, 0.956, 0.621, 1.0,-0.272,-0.647, 1.0,-1.107, 1.704);
-    vec3 yiq = toYIQ * c;
-    float hue = atan(yiq.z, yiq.y) + h;
-    float ch  = length(yiq.yz);
-    return toRGB * vec3(yiq.x, ch*cos(hue), ch*sin(hue));
+    const mat3 toYIQ = mat3(0.299, 0.587, 0.114, 0.596,-0.275,-0.321, 0.212,-0.523, 0.311);
+    const mat3 toRGB = mat3(1.0, 0.956, 0.621, 1.0,-0.272,-0.647, 1.0,-1.107, 1.704);
+    vec3 y = toYIQ * c;
+    float hue = atan(y.z, y.y) + h;
+    float ch  = length(y.yz);
+    return toRGB * vec3(y.x, ch*cos(hue), ch*sin(hue));
   }
 
-  // ── star layer: voxel-cells, point-sample inside each cell ──
-  vec3 starLayer(vec3 d, float scale, float thresh, float coreRadius, float haloRadius, float twinkleAmp){
-    vec3 p   = d * scale;
-    vec3 ip  = floor(p);
-    vec3 fp  = fract(p);
-    float h  = hash(ip);
-    if (h < thresh) return vec3(0.0);
-
-    // star position inside cell
-    vec3 sp  = vec3(hash(ip+1.7), hash(ip+5.3), hash(ip+9.1));
+  vec3 starLayer(vec3 d, float scale, float thresh, float coreR, float haloR, float twAmp){
+    vec3 p  = d * scale;
+    vec3 ip = floor(p);
+    vec3 fp = fract(p);
+    float h = hash3(ip);
+    float dim = max(h - thresh, 0.0) / max(1.0 - thresh, 0.001);
+    vec3 sp  = vec3(hash3(ip + vec3(1.7)), hash3(ip + vec3(5.3)), hash3(ip + vec3(9.1)));
     float dist = length(fp - sp);
-
-    // bright core
-    float core = smoothstep(coreRadius, 0.0, dist);
-    // soft halo
-    float halo = smoothstep(haloRadius, 0.0, dist) * 0.35;
-
-    // twinkle modulated by per-star phase
-    float tw = 0.7 + twinkleAmp * sin(uTime * (1.5 + h * 3.0) + h * 47.0);
-
-    // colour from blackbody hash
-    float colorRoll = hash(ip + 3.3);
-    vec3  col       = starColor(colorRoll);
-
-    // magnitude — only top stars get strong intensity
-    float mag = pow((h - thresh) / (1.0 - thresh), 0.5);
-
-    return col * (core * 1.4 + halo) * mag * tw;
+    float core = smoothstep(coreR, 0.0, dist);
+    float halo = smoothstep(haloR, 0.0, dist) * 0.35;
+    float tw = 0.7 + twAmp * sin(uTime * (1.5 + h * 3.0) + h * 47.0);
+    vec3 col = starColor(hash3(ip + vec3(3.3)));
+    return col * (core * 1.4 + halo) * dim * tw;
   }
 
   void main(){
     vec3 d = normalize(vDir);
 
-    // ── NEBULA: domain-warped filaments, dim and structured ───
     float t = uTime * 0.010;
-    vec3 q = d * 1.6 + vec3(t, -t*0.55, t*0.40);
-    float n  = warpedFbm(q);
-    float n2 = warpedFbm(q * 2.7 + 8.3);
-    float mask = smoothstep(0.40, 0.92, n * 0.65 + n2 * 0.45);
-
+    vec3 q = d * 1.7 + vec3(t, -t*0.55, t*0.40);
+    float n1 = fbm(q);
+    float n2 = fbm(q * 2.5 + 4.2);
+    float mask = smoothstep(0.40, 0.92, n1 * 0.65 + n2 * 0.40);
     float pulse = 0.85 + 0.15 * sin(uTime * 0.22);
 
-    // three-tone palette (deep purple → teal → amber)
     vec3 violet = vec3(0.32, 0.10, 0.50);
     vec3 teal   = vec3(0.05, 0.30, 0.45);
     vec3 amber  = vec3(0.45, 0.20, 0.08);
-    vec3 cloudC = mix(mix(violet, teal, n2), amber, n * 0.55);
+    vec3 cloudC = mix(mix(violet, teal, n2), amber, n1 * 0.55);
     cloudC = hueShift(cloudC, uHue);
-    vec3 cloud  = cloudC * mask * 0.28 * uIntensity * mix(1.0, pulse, uPulse);
+    vec3 cloud = cloudC * mask * 0.30 * uIntensity * mix(1.0, pulse, uPulse);
 
-    // ── STARS: 3 layers (background field, mid, foreground giants) ─
-    vec3 starsBg  = starLayer(d, 380.0, 1.0 - 0.012 * uStars, 0.04, 0.13, 0.30);
-    vec3 starsMid = starLayer(d, 130.0, 1.0 - 0.006 * uStars, 0.05, 0.18, 0.45);
-    vec3 starsBig = starLayer(d,  35.0, 1.0 - 0.0025 * uStars, 0.07, 0.30, 0.55);
+    vec3 starsBg  = starLayer(d, 340.0, 1.0 - 0.011 * uStars, 0.04, 0.13, 0.30);
+    vec3 starsMid = starLayer(d, 110.0, 1.0 - 0.005 * uStars, 0.05, 0.18, 0.45);
+    vec3 starsBig = starLayer(d,  32.0, 1.0 - 0.002 * uStars, 0.07, 0.30, 0.55);
 
-    // ── BRIGHT HERO stars get an additional soft outer corona ──
-    vec3 corona = vec3(0.0);
-    {
-        vec3 p  = d * 18.0;
-        vec3 ip = floor(p);
-        float h = hash(ip);
-        if (h > 0.9988) {
-            vec3 sp = vec3(hash(ip+1.7), hash(ip+5.3), hash(ip+9.1));
-            float dist = length(fract(p) - sp);
-            float coronaR = 0.55;
-            float c = smoothstep(coronaR, 0.0, dist) * 0.65;
-            corona = starColor(hash(ip+3.3)) * c * (0.7 + 0.3 * sin(uTime * 1.2 + h * 31.0));
-        }
-    }
-
-    vec3 col = cloud + starsBg + starsMid * 1.05 + starsBig * 1.2 + corona;
-
-    // subtle dust desaturation in front of bright clouds (haze)
+    vec3 col = cloud + starsBg + starsMid * 1.05 + starsBig * 1.2;
     col *= 1.0 - mask * 0.08;
-
     gl_FragColor = vec4(col, 1.0);
   }
 \`;
@@ -1304,8 +1267,18 @@ raycaster.params.Points.threshold = 8;
 const mouse = new THREE.Vector2();
 let isolated = null;
 
-let manifest = { vault: '', vaultPath: '' };
-fetch('/api/manifest').then(r => r.json()).then(m => manifest = m).catch(()=>{});
+let manifest = { vault: '', vaultPath: '', hasStella: false };
+fetch('/api/manifest').then(r => r.json()).then(m => {
+    manifest = m;
+    const el = document.getElementById('stella-status');
+    if (!el) return;
+    if (!m.hasStella) { el.textContent = 'off'; el.style.color = '#666'; return; }
+    el.textContent = 'pinging…'; el.style.color = '#8ee0ff';
+    fetch('/api/stella-ping').then(r => r.json()).then(p => {
+        if (p.reachable) { el.textContent = '◉ online'; el.style.color = '#7affc4'; }
+        else { el.textContent = 'unreachable'; el.style.color = '#ff7a99'; el.title = p.error || ''; }
+    }).catch(() => { el.textContent = 'err'; el.style.color = '#ff7a99'; });
+}).catch(()=>{});
 
 const npLobeColors = {};   // for category accent on panel
 for (const k of Object.keys(DATA.lobes)) npLobeColors[k] = DATA.lobes[k].color;
@@ -1689,7 +1662,11 @@ function chatRender() {
         if (msg.kind === 'loading') return '<div class="cm-bot cm-loading">thinking…</div>';
         if (msg.kind === 'error')   return '<div class="cm-bot cm-error">' + esc(msg.text) + '</div>';
         // bot reply with optional tour
-        let html = '<div class="cm-bot">' + esc(msg.text);
+        let html = '<div class="cm-bot">';
+        if (msg.stella && msg.stella.chunks > 0) {
+            html += '<div style="font-size:8.5px;letter-spacing:2px;color:#7affc4;margin-bottom:6px">◉ STELLA · ' + msg.stella.chunks + ' chunks</div>';
+        }
+        html += esc(msg.text);
         if (msg.tour && msg.tour.length) {
             html += '<div class="cm-tour">' + msg.tour.map((t, k) =>
                 '<div class="cm-tour-step" data-idx="' + t.idx + '">' +
@@ -1753,6 +1730,7 @@ async function chatSubmit() {
                 text: j.summary || '(no summary)',
                 tour: (j.tour || []).filter(t => Number.isInteger(t.idx) && t.idx >= 0 && t.idx < N),
                 follow_up: j.follow_up || [],
+                stella: j.stella || null,
             });
         }
     } catch (e) {

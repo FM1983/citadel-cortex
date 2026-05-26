@@ -56,6 +56,72 @@ if (!ANTHROPIC_KEY) {
 }
 const CHAT_MODEL = process.env.CHAT_MODEL || 'claude-haiku-4-5';
 
+// ── STELLA-AGENT integration (read-only memory + brain search) ─────────────
+const STELLA_URL   = process.env.STELLA_URL || 'http://100.69.150.90:8790';
+let   STELLA_TOKEN = process.env.STELLA_MEMORY_TOKEN || '';
+if (!STELLA_TOKEN) {
+    const home = require('os').homedir();
+    const candidates = [
+        path.join(home, 'Repo/Stella-Agent/.env.local'),
+        path.join(home, '.local/share/citadel-research-desk/.env'),
+        path.join(home, '.config/citadel/env'),
+        path.join(home, '.config/stella/env'),
+        path.join(home, '.hermes/.env'),
+    ];
+    for (const f of candidates) {
+        try {
+            const txt = fs.readFileSync(f, 'utf8');
+            const m = txt.match(/^STELLA_MEMORY_TOKEN\s*=\s*(.+)$/m);
+            if (m) { STELLA_TOKEN = m[1].trim().replace(/^["']|["']$/g, ''); break; }
+        } catch (e) {}
+    }
+}
+
+async function queryStella(query) {
+    if (!STELLA_TOKEN) return null;
+    // Try /brain/search first (vault-aware), fall back to /memory/search
+    const endpoints = [
+        { path: '/brain/search', body: { query, limit: 6 } },
+        { path: '/memory/search', body: { query, requester_identity_id: 'citadel-cortex', limit: 6 } },
+    ];
+    for (const { path: ep, body } of endpoints) {
+        try {
+            const ac = new AbortController();
+            const t = setTimeout(() => ac.abort(), 3000);
+            const r = await fetch(STELLA_URL + ep, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-stella-memory-token': STELLA_TOKEN },
+                body: JSON.stringify(body),
+                signal: ac.signal,
+            });
+            clearTimeout(t);
+            if (r.status === 404) continue;           // try next endpoint
+            if (!r.ok) {
+                if (ep === endpoints[endpoints.length - 1].path) {
+                    return { error: 'stella ' + r.status, chunks: [], endpoint: ep };
+                }
+                continue;
+            }
+            const j = await r.json();
+            const chunks = j.chunks || j.results || j.matches || j.hits || [];
+            return {
+                error: null,
+                endpoint: ep,
+                chunks: chunks.slice(0, 6).map(c => ({
+                    text:   c.text || c.content || c.body || c.chunk || c.snippet || c.excerpt || c.payload || '',
+                    source: c.source || c.path || c.document || c.title || c.id || '',
+                    score:  c.score || c.distance || c.similarity || null,
+                })),
+            };
+        } catch (e) {
+            if (ep === endpoints[endpoints.length - 1].path) {
+                return { error: e.message, chunks: [] };
+            }
+        }
+    }
+    return { error: 'no endpoint reachable', chunks: [] };
+}
+
 let rebuildJob = null;
 
 const MIME = {
@@ -105,7 +171,19 @@ http.createServer((req, res) => {
 
     // ── API ──────────────────────────────────────────────────────────────────
     if (url === '/api/manifest') {
-        return sendJSON(res, 200, { vault: VAULT_NAME, vaultPath: VAULT, hasAuth: AUTH_ON, hasChat: !!ANTHROPIC_KEY, chatModel: CHAT_MODEL });
+        return sendJSON(res, 200, {
+            vault: VAULT_NAME, vaultPath: VAULT, hasAuth: AUTH_ON,
+            hasChat: !!ANTHROPIC_KEY, chatModel: CHAT_MODEL,
+            hasStella: !!STELLA_TOKEN, stellaUrl: STELLA_URL,
+        });
+    }
+    if (url === '/api/stella-ping') {
+        if (!STELLA_TOKEN) return sendJSON(res, 503, { reachable: false, error: 'no token configured' });
+        const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 1500);
+        fetch(STELLA_URL + '/health', { signal: ac.signal })
+            .then(r => { clearTimeout(t); sendJSON(res, 200, { reachable: r.ok, status: r.status }); })
+            .catch(e => { clearTimeout(t); sendJSON(res, 200, { reachable: false, error: e.message }); });
+        return;
     }
     if (url === '/api/note') {
         const p = safeVaultPath(qs.get('path'));
@@ -189,12 +267,26 @@ http.createServer((req, res) => {
                 String(c.id).slice(0, 88)
             ).join('\n');
 
+            // ── Stella memory enrichment (parallel, optional) ──────────────
+            const stellaResult = STELLA_TOKEN ? await queryStella(message) : null;
+            let stellaBlock = '';
+            if (stellaResult && stellaResult.chunks && stellaResult.chunks.length) {
+                stellaBlock =
+                    '\n\nADDITIONAL CONTEXT (from STELLA, the second-brain agent):\n' +
+                    stellaResult.chunks.map((c, i) =>
+                        '[' + (i+1) + '] ' + (c.source ? '(' + c.source.slice(0,40) + ') ' : '') +
+                        String(c.text || '').replace(/\s+/g, ' ').slice(0, 320)
+                    ).join('\n\n') +
+                    '\n\nYou may reference this context in your summary, but the tour must still come from the candidate node indices above.';
+            }
+
             const systemPrompt = [
                 'You are the navigator for a 3D knowledge-graph visualisation of an Obsidian vault.',
                 'A user asks a plain-English question; you choose a coherent set of nodes to visit and write a tour.',
                 '',
                 'Candidate nodes  (idx | cortex | days_old | title):',
                 table,
+                stellaBlock,
                 '',
                 'Cortexes are: PROJECTS, LITIG (litigation), DESIG (design), ADMIN (administration), RESEA (research), CONTA (contacts), ARCHI (archives), MISC.',
                 '',
@@ -241,6 +333,9 @@ http.createServer((req, res) => {
                 try { plan = JSON.parse(m[0]); } catch (e) {
                     return sendJSON(res, 200, { summary: txt, tour: [], follow_up: [], raw: true, parseError: e.message });
                 }
+                plan.stella = stellaResult
+                    ? { chunks: stellaResult.chunks?.length || 0, error: stellaResult.error }
+                    : null;
                 sendJSON(res, 200, plan);
             } catch (e) {
                 sendJSON(res, 500, { error: e.message });
