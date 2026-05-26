@@ -515,6 +515,11 @@ canvas{display:block;width:100%!important;height:100%!important}
 #chat-form button{background:rgba(122,255,196,.14);border:1px solid rgba(122,255,196,.5);color:#7affc4;
   font-family:'Courier New',monospace;font-size:11px;padding:8px 13px;cursor:pointer;border-radius:2px}
 #chat-form button:hover{background:rgba(122,255,196,.28)}
+#chat-mic{background:rgba(140,200,230,.10)!important;border:1px solid rgba(140,200,230,.35)!important;color:#aaccdd!important;font-size:14px!important;padding:8px 10px!important;transition:all .12s}
+#chat-mic.listening{background:rgba(255,122,153,.25)!important;border-color:#ff7a99!important;color:#fff!important;animation:micPulse 1s infinite;box-shadow:0 0 14px rgba(255,122,153,.5)}
+#chat-input.listening{border-color:#ff7a99!important;box-shadow:0 0 12px rgba(255,122,153,.35)!important}
+@keyframes micPulse{0%,100%{box-shadow:0 0 8px rgba(255,122,153,.4)}50%{box-shadow:0 0 22px rgba(255,122,153,.85)}}
+#chat-speak.on{color:#7affc4!important}
 #chat-btn{position:fixed;bottom:80px;left:18px;background:rgba(122,255,196,.13);border:1px solid rgba(122,255,196,.5);color:#7affc4;
   font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;z-index:30;pointer-events:auto;
   text-shadow:0 0 8px rgba(122,255,196,.6);transition:all .15s;border-radius:2px}
@@ -638,13 +643,15 @@ canvas{display:block;width:100%!important;height:100%!important}
   <header>
     <span class="ct">⌃ CITADEL NAVIGATOR</span>
     <div style="display:flex;gap:4px">
-      <button class="cc" id="chat-new" title="new conversation" style="font-size:12px;color:#7affc4">↺</button>
-      <button class="cc" id="chat-close">✕</button>
+      <button class="cc" id="chat-speak" title="auto-speak replies" style="font-size:13px;color:#888">🔊</button>
+      <button class="cc" id="chat-new"   title="new conversation"   style="font-size:12px;color:#7affc4">↺</button>
+      <button class="cc" id="chat-close" title="close">✕</button>
     </div>
   </header>
   <div id="chat-log"></div>
   <form id="chat-form">
-    <input id="chat-input" type="text" placeholder='ask anything · e.g. "tour recent litigation"' autocomplete="off" />
+    <button id="chat-mic" type="button" title="hold or click to speak">🎙</button>
+    <input id="chat-input" type="text" placeholder='ask, or hold mic · "tour recent litigation"' autocomplete="off" />
     <button type="submit">↗</button>
   </form>
 </div>
@@ -2010,6 +2017,7 @@ async function chatSubmit(autoText) {
                 stella: j.stella || null,
             });
             chatConv.push({ role: 'assistant', content: replyText });
+            if (typeof speak === 'function') speak(replyText);
         }
     } catch (e) {
         chatHistory.pop();
@@ -2074,7 +2082,11 @@ function openChat() {
     document.getElementById('chat').classList.add('open');
     setTimeout(() => document.getElementById('chat-input').focus(), 50);
 }
-function closeChat() { document.getElementById('chat').classList.remove('open'); }
+function closeChat() {
+    document.getElementById('chat').classList.remove('open');
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    if (typeof stopListening === 'function') stopListening();
+}
 document.getElementById('chat-btn').addEventListener('click', openChat);
 document.getElementById('chat-close').addEventListener('click', closeChat);
 document.getElementById('chat-new').addEventListener('click', () => {
@@ -2083,6 +2095,122 @@ document.getElementById('chat-new').addEventListener('click', () => {
     setTimeout(() => document.getElementById('chat-input').focus(), 50);
 });
 document.getElementById('chat-form').addEventListener('submit', e => { e.preventDefault(); chatSubmit(); });
+
+// ════════════════════════════════════════════════════════════════════════════
+// VOICE — Speech Recognition (STT) + Speech Synthesis (TTS)
+// ════════════════════════════════════════════════════════════════════════════
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let listening   = false;
+let autoSpeak   = localStorage.getItem('cortex-auto-speak') === '1';
+
+function setSpeakBtn() {
+    const b = document.getElementById('chat-speak');
+    if (!b) return;
+    b.classList.toggle('on', autoSpeak);
+    b.textContent = autoSpeak ? '🔊' : '🔇';
+    b.title = autoSpeak ? 'speaking on · click to mute' : 'muted · click to enable';
+}
+setSpeakBtn();
+document.getElementById('chat-speak').addEventListener('click', () => {
+    autoSpeak = !autoSpeak;
+    localStorage.setItem('cortex-auto-speak', autoSpeak ? '1' : '0');
+    setSpeakBtn();
+    if (!autoSpeak && window.speechSynthesis) speechSynthesis.cancel();
+});
+
+function initVoice() {
+    if (!SR) return false;
+    if (recognition) return true;
+    recognition = new SR();
+    recognition.continuous     = false;
+    recognition.interimResults = true;
+    recognition.lang           = 'en-NZ';
+    recognition.onstart = () => {
+        listening = true;
+        document.getElementById('chat-mic').classList.add('listening');
+        document.getElementById('chat-input').classList.add('listening');
+        document.getElementById('chat-input').placeholder = 'listening…';
+        if (window.speechSynthesis) speechSynthesis.cancel();   // duck any current TTS
+    };
+    recognition.onresult = (e) => {
+        let final = '', interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+            const r = e.results[i];
+            if (r.isFinal) final += r[0].transcript;
+            else interim += r[0].transcript;
+        }
+        document.getElementById('chat-input').value = (final + interim).trim();
+    };
+    recognition.onerror = (e) => {
+        const t = e.error || 'mic error';
+        document.getElementById('chat-input').placeholder = '⚠ ' + t;
+    };
+    recognition.onend = () => {
+        listening = false;
+        document.getElementById('chat-mic').classList.remove('listening');
+        document.getElementById('chat-input').classList.remove('listening');
+        document.getElementById('chat-input').placeholder = 'ask, or hold mic · "tour recent litigation"';
+        const txt = document.getElementById('chat-input').value.trim();
+        if (txt) {
+            // user used voice → opt them in to TTS for the reply
+            if (!autoSpeak) { autoSpeak = true; localStorage.setItem('cortex-auto-speak','1'); setSpeakBtn(); }
+            chatSubmit();
+        }
+    };
+    return true;
+}
+
+function startListening() {
+    if (!initVoice()) {
+        document.getElementById('chat-input').placeholder = '⚠ voice not supported by this browser';
+        return;
+    }
+    try { recognition.start(); } catch (e) {}
+}
+function stopListening() { try { recognition && recognition.stop(); } catch (e) {} }
+
+const micBtn = document.getElementById('chat-mic');
+micBtn.addEventListener('click', () => listening ? stopListening() : startListening());
+// hold-to-talk on touch / long-press too
+micBtn.addEventListener('pointerdown', () => { if (!listening) startListening(); });
+micBtn.addEventListener('pointerup',   () => { if (listening) setTimeout(stopListening, 350); });
+
+// ── TTS ──────────────────────────────────────────────────────────────
+function stripForSpeech(s) {
+    return String(s || '')
+        .replace(/```[\\s\\S]*?```/g, '. code block. ')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/\\*\\*([^*]+)\\*\\*/g, '$1')
+        .replace(/\\*([^*]+)\\*/g, '$1')
+        .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1')
+        .replace(/^#+\\s+/gm, '')
+        .replace(/[•▷◐◇▲▶◀⌃◉↶↷●○✕]/g, '')
+        .replace(/\\s+/g, ' ')
+        .trim();
+}
+function speak(text) {
+    if (!autoSpeak || !window.speechSynthesis) return;
+    speechSynthesis.cancel();
+    const clean = stripForSpeech(text);
+    if (!clean) return;
+    const utter = new SpeechSynthesisUtterance(clean);
+    utter.lang  = 'en-NZ';
+    utter.rate  = 1.05;
+    utter.pitch = 1.0;
+    utter.volume = 1.0;
+    // pick a richer voice if available
+    const voices = speechSynthesis.getVoices();
+    const preferred =
+        voices.find(v => v.lang === 'en-NZ') ||
+        voices.find(v => /samantha|karen|kate|allison|moira|serena/i.test(v.name)) ||
+        voices.find(v => v.lang && v.lang.startsWith('en-')) ||
+        voices[0];
+    if (preferred) utter.voice = preferred;
+    speechSynthesis.speak(utter);
+}
+// some browsers populate voices async
+if (window.speechSynthesis) speechSynthesis.onvoiceschanged = () => {};
 
 document.addEventListener('keydown', e => {
     if (e.target.matches && e.target.matches('input,textarea')) return;
