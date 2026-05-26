@@ -473,6 +473,35 @@ canvas{display:block;width:100%!important;height:100%!important}
 #dash-btn{position:fixed;bottom:80px;right:155px;background:rgba(122,255,196,.13);border:1px solid rgba(122,255,196,.5);color:#7affc4;font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;z-index:30;pointer-events:auto;text-shadow:0 0 8px rgba(122,255,196,.6);transition:all .15s;border-radius:2px}
 #dash-btn:hover{background:rgba(122,255,196,.28);box-shadow:0 0 20px rgba(122,255,196,.35)}
 
+/* ── GLOBAL VOICE FABs (bottom-centre, always visible) ─────── */
+#voice-fab, #live-fab{position:fixed;bottom:18px;width:54px;height:54px;border-radius:50%;
+  font-size:22px;line-height:1;cursor:pointer;z-index:31;pointer-events:auto;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Courier New',monospace;transition:all .15s;border:none}
+#voice-fab{left:50%;transform:translateX(calc(-50% - 34px));
+  background:rgba(140,200,230,.14);border:1px solid rgba(140,200,230,.5);color:#8ee0ff;
+  box-shadow:0 0 14px rgba(140,200,230,.18)}
+#voice-fab:hover{background:rgba(140,200,230,.28);box-shadow:0 0 22px rgba(140,200,230,.5)}
+#voice-fab.recording{background:rgba(255,122,153,.30);border-color:#ff7a99;color:#fff;
+  animation:micPulse 1s infinite}
+#live-fab{left:50%;transform:translateX(calc(-50% + 34px));
+  background:rgba(122,255,196,.14);border:1px solid rgba(122,255,196,.5);color:#7affc4;
+  box-shadow:0 0 14px rgba(122,255,196,.18)}
+#live-fab:hover{background:rgba(122,255,196,.28);box-shadow:0 0 22px rgba(122,255,196,.5)}
+#live-fab.live{background:rgba(122,255,196,.40);border-color:#7affc4;color:#fff;
+  box-shadow:0 0 30px rgba(122,255,196,.85);animation:livePulse 1.8s infinite}
+#live-fab.live.listening{animation:livePulseFast 0.6s infinite;border-color:#fff}
+#live-fab.live.speaking{background:rgba(238,156,230,.40);border-color:#ee9ce6;color:#fff;
+  box-shadow:0 0 26px rgba(238,156,230,.7);animation:none}
+@keyframes livePulse{0%,100%{box-shadow:0 0 12px rgba(122,255,196,.5)}50%{box-shadow:0 0 38px rgba(122,255,196,1)}}
+@keyframes livePulseFast{0%,100%{box-shadow:0 0 12px rgba(255,255,255,.4)}50%{box-shadow:0 0 32px rgba(255,255,255,.9)}}
+#live-status{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+  font-family:'Courier New',monospace;font-size:9px;letter-spacing:3px;color:#7affc4;
+  text-shadow:0 0 10px rgba(122,255,196,.5);pointer-events:none;z-index:31;
+  background:rgba(5,12,22,.7);padding:4px 12px;border-radius:12px;border:1px solid rgba(122,255,196,.3);
+  display:none}
+#live-status.show{display:block}
+
 /* ── NAVIGATOR CHAT ─────────────────────────────────────────── */
 #chat{position:fixed;left:18px;bottom:120px;width:380px;max-width:92vw;background:rgba(5,12,22,.94);
   border:1px solid rgba(122,255,196,.25);backdrop-filter:blur(14px);border-radius:4px;
@@ -557,6 +586,10 @@ canvas{display:block;width:100%!important;height:100%!important}
     #chat-btn{bottom:60px;left:18px}
     #gui-toggle{top:auto;bottom:18px;right:auto;left:18px}
     #dash-btn{bottom:18px;right:140px}
+    #voice-fab,#live-fab{width:46px;height:46px;font-size:18px;bottom:88px}
+    #voice-fab{transform:translateX(calc(-50% - 28px))}
+    #live-fab{transform:translateX(calc(-50% + 28px))}
+    #live-status{bottom:140px}
     .lil-gui.root{width:88vw;max-width:88vw;top:auto;bottom:104px;right:6vw}
     #dash{width:96vw;max-height:78vh}
     #dash .dgrid{grid-template-columns:1fr;padding:14px 16px;gap:14px}
@@ -669,6 +702,10 @@ canvas{display:block;width:100%!important;height:100%!important}
     <button id="th-stop" class="stop">✕ stop</button>
   </div>
 </div>
+
+<button id="voice-fab" title="quick voice (tap to ask)">🎙</button>
+<button id="live-fab" title="live conversation (continuous)">🔄</button>
+<div id="live-status">listening…</div>
 
 <button id="chat-btn">⌃ NAVIGATOR</button>
 <button id="dash-btn">▤ DASHBOARD</button>
@@ -2257,6 +2294,248 @@ async function speak(text) {
     speakBrowser(clean);
 }
 if (window.speechSynthesis) speechSynthesis.onvoiceschanged = () => {};
+
+// ════════════════════════════════════════════════════════════════════════════
+// GLOBAL VOICE FAB — quick-talk + live-conversation
+// ════════════════════════════════════════════════════════════════════════════
+const voiceFab = document.getElementById('voice-fab');
+const liveFab  = document.getElementById('live-fab');
+const liveStat = document.getElementById('live-status');
+
+// helper — pick best mime once
+function bestMime() {
+    const mimes = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'];
+    return mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
+}
+
+// ── (1) Quick-voice FAB — single utterance, can fire anywhere ─────────
+let quickRecorder = null;
+let quickChunks = [];
+let quickStream = null;
+let quickRecording = false;
+
+async function quickStart() {
+    if (quickRecording) return;
+    // open chat panel so user sees the result
+    if (!document.getElementById('chat').classList.contains('open')) openChat();
+    if (elevenAudio) { try { elevenAudio.pause(); } catch(e){} elevenAudio = null; }
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    try {
+        quickStream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true }
+        });
+    } catch (e) {
+        document.getElementById('chat-input').placeholder = '⚠ mic blocked: ' + e.message;
+        return;
+    }
+    const mime = bestMime();
+    quickRecorder = new MediaRecorder(quickStream, mime ? { mimeType: mime, audioBitsPerSecond: 64000 } : {});
+    quickChunks = [];
+    quickRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) quickChunks.push(e.data); };
+    quickRecorder.onstop = async () => {
+        quickStream.getTracks().forEach(t => t.stop());
+        voiceFab.classList.remove('recording');
+        quickRecording = false;
+        const blob = new Blob(quickChunks, { type: quickRecorder.mimeType });
+        if (blob.size < 1200) return;
+        const input = document.getElementById('chat-input');
+        input.placeholder = 'transcribing…';
+        try {
+            const r = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob });
+            const j = await r.json();
+            input.placeholder = 'ask, or hold mic…';
+            const text = (j.text || '').trim();
+            if (text) {
+                input.value = text;
+                if (!autoSpeak) { autoSpeak = true; localStorage.setItem('cortex-auto-speak','1'); setSpeakBtn(); }
+                chatSubmit();
+            }
+        } catch (e) { input.placeholder = '⚠ ' + e.message; }
+    };
+    quickRecorder.start();
+    quickRecording = true;
+    voiceFab.classList.add('recording');
+}
+function quickStop() {
+    if (!quickRecording || !quickRecorder) return;
+    if (quickRecorder.state !== 'inactive') { try { quickRecorder.stop(); } catch(e) {} }
+}
+voiceFab.addEventListener('click', () => quickRecording ? quickStop() : quickStart());
+
+// ── (2) Live conversation mode — continuous VAD-driven ────────────────
+let liveMode = false;
+let liveStream = null;
+let liveCtx = null;
+let liveAnalyser = null;
+let liveData = null;
+let liveRecorder = null;
+let liveChunks = [];
+let liveSpeakingFlag = false;   // true while TTS playing
+let liveCancel = false;
+
+function setLiveStatus(text, mode) {
+    liveStat.textContent = text;
+    liveFab.classList.remove('listening','speaking');
+    if (mode === 'listen')  liveFab.classList.add('listening');
+    if (mode === 'speak')   liveFab.classList.add('speaking');
+}
+
+async function liveStart() {
+    if (liveMode) return;
+    if (quickRecording) quickStop();
+    if (!document.getElementById('chat').classList.contains('open')) openChat();
+    if (elevenAudio) { try { elevenAudio.pause(); } catch(e){} elevenAudio = null; }
+    if (window.speechSynthesis) speechSynthesis.cancel();
+
+    try {
+        liveStream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+    } catch (e) {
+        liveStat.textContent = '⚠ mic blocked';
+        liveStat.classList.add('show');
+        setTimeout(() => liveStat.classList.remove('show'), 3000);
+        return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    liveCtx = new AC();
+    const src = liveCtx.createMediaStreamSource(liveStream);
+    liveAnalyser = liveCtx.createAnalyser();
+    liveAnalyser.fftSize = 1024;
+    src.connect(liveAnalyser);
+    liveData = new Uint8Array(liveAnalyser.fftSize);
+
+    liveMode = true; liveCancel = false;
+    liveFab.classList.add('live');
+    liveStat.classList.add('show');
+    setLiveStatus('say something…', 'listen');
+    liveLoop();
+}
+
+function liveStop() {
+    liveCancel = true;
+    liveMode = false;
+    liveFab.classList.remove('live','listening','speaking');
+    liveStat.classList.remove('show');
+    try { if (liveRecorder && liveRecorder.state !== 'inactive') liveRecorder.stop(); } catch(e){}
+    try { liveStream && liveStream.getTracks().forEach(t => t.stop()); } catch(e){}
+    try { liveCtx && liveCtx.close(); } catch(e){}
+    liveStream = null; liveCtx = null; liveAnalyser = null;
+}
+
+function rmsFromAnalyser() {
+    liveAnalyser.getByteTimeDomainData(liveData);
+    let sum = 0;
+    for (let i = 0; i < liveData.length; i++) {
+        const v = (liveData[i] - 128) / 128;
+        sum += v * v;
+    }
+    return Math.sqrt(sum / liveData.length);
+}
+
+async function liveLoop() {
+    while (liveMode && !liveCancel) {
+        // wait if TTS is currently playing
+        while (liveSpeakingFlag && !liveCancel) {
+            setLiveStatus('speaking…', 'speak');
+            await new Promise(r => setTimeout(r, 150));
+        }
+        if (liveCancel || !liveMode) break;
+        setLiveStatus('listening…', 'listen');
+
+        // start a fresh recorder for this utterance
+        const mime = bestMime();
+        liveRecorder = new MediaRecorder(liveStream, mime ? { mimeType: mime, audioBitsPerSecond: 64000 } : {});
+        liveChunks = [];
+        liveRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) liveChunks.push(e.data); };
+        const stoppedPromise = new Promise(r => { liveRecorder.onstop = r; });
+        liveRecorder.start();
+
+        // VAD watcher
+        let hasSpoken = false;
+        let silenceStart = 0;
+        const maxUtteranceMs = 22000;       // hard cap per utterance
+        const minSpeechMs = 250;            // require at least this much speech
+        const silenceHoldMs = 1100;         // pause this long after speech to end utterance
+        const startMs = performance.now();
+        const SPEAK_THR  = 0.025;
+        const SILENT_THR = 0.013;
+        let speakingFrames = 0;
+
+        await new Promise((resolve) => {
+            const tick = () => {
+                if (liveCancel || !liveMode || liveRecorder.state !== 'recording') { resolve(); return; }
+                const rms = rmsFromAnalyser();
+                const elapsed = performance.now() - startMs;
+                if (rms > SPEAK_THR) {
+                    speakingFrames++;
+                    if (speakingFrames > 2) hasSpoken = true;
+                    silenceStart = 0;
+                } else if (hasSpoken && rms < SILENT_THR) {
+                    if (silenceStart === 0) silenceStart = performance.now();
+                    else if (performance.now() - silenceStart > silenceHoldMs) { resolve(); return; }
+                }
+                if (elapsed > maxUtteranceMs) { resolve(); return; }
+                setTimeout(tick, 80);
+            };
+            setTimeout(tick, 80);
+        });
+
+        try { if (liveRecorder.state !== 'inactive') liveRecorder.stop(); } catch(e) {}
+        await stoppedPromise;
+        if (liveCancel || !liveMode) break;
+
+        const blob = new Blob(liveChunks, { type: liveRecorder.mimeType });
+        if (blob.size < 1500 || !hasSpoken) continue;     // nothing useful captured
+
+        setLiveStatus('thinking…', 'listen');
+        try {
+            const r = await fetch('/api/transcribe', { method:'POST', headers:{'Content-Type': blob.type}, body: blob });
+            const j = await r.json();
+            const text = (j.text || '').trim();
+            if (!text) continue;
+            document.getElementById('chat-input').value = text;
+            if (!autoSpeak) { autoSpeak = true; localStorage.setItem('cortex-auto-speak','1'); setSpeakBtn(); }
+            // submit and wait for reply
+            await chatSubmit();
+            // after speak() fires, we wait inside speakingFlag loop
+        } catch (e) {
+            console.error('live transcribe failed:', e);
+        }
+    }
+}
+
+liveFab.addEventListener('click', () => liveMode ? liveStop() : liveStart());
+
+// Hook into existing speak() so we know when TTS is playing
+const _origSpeak = speak;
+window.speak = async function(text) {
+    if (!autoSpeak) return _origSpeak(text);
+    liveSpeakingFlag = true;
+    // shim Audio onended via the eleven path
+    const before = elevenAudio;
+    await _origSpeak(text);
+    // wait for current eleven audio (if any) to finish
+    if (elevenAudio && elevenAudio !== before) {
+        await new Promise(res => {
+            const done = () => res();
+            elevenAudio.addEventListener('ended', done, { once: true });
+            elevenAudio.addEventListener('pause', done, { once: true });
+            // safety timeout
+            setTimeout(done, 25000);
+        });
+    } else {
+        // browser TTS fallback — poll speechSynthesis.speaking
+        await new Promise(res => {
+            const poll = () => window.speechSynthesis && speechSynthesis.speaking
+                ? setTimeout(poll, 200) : res();
+            setTimeout(poll, 200);
+        });
+    }
+    liveSpeakingFlag = false;
+};
+// rebind alias to the wrapper so chatSubmit calls the new one
+speak = window.speak;
 
 document.addEventListener('keydown', e => {
     if (e.target.matches && e.target.matches('input,textarea')) return;
