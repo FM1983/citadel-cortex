@@ -23,6 +23,7 @@ const COLORS = {
     ADMINISTRATION: C('8ee0ff'),
     RESEARCH:       C('5af0e8'),
     CONTACTS:       C('ee9ce6'),
+    TASTE:          C('ff9ec7'),
     ARCHIVES:       C('a8b0bd'),
 };
 
@@ -77,6 +78,9 @@ const newCfg = {
 
         // CONTACTS — people files, master contact register
         { query: '"Master Contact Register" OR path:people',                                            color: { a: 1, rgb: COLORS.CONTACTS       } },
+
+        // TASTE — personal aesthetic: music, photos, places, likes, saved
+        { query: 'path:Taste OR path:Music OR path:Instagram OR path:Photos OR path:Places OR path:Saved OR path:Likes', color: { a: 1, rgb: COLORS.TASTE } },
 
         // ADMINISTRATION — Admin folder + AI infrastructure (but FM ClaudeCode is excluded globally)
         { query: 'path:Admin OR path:"Citadel-AI" OR path:"Citadel-Intel" OR path:"Citadel Group AI Assets" OR governance OR accounting', color: { a: 1, rgb: COLORS.ADMINISTRATION } },

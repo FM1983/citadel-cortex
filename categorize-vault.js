@@ -14,7 +14,7 @@ const { records } = JSON.parse(fs.readFileSync(IN, 'utf8'));
 console.log(`\n🧬 Categorizing ${records.length} records…`);
 
 // ─── Deterministic categorization ────────────────────────────────────────────
-const CATEGORIES = ['PROJECTS','LITIGATION','CONTACTS','DESIGN','RESEARCH','ADMINISTRATION','ARCHIVES','MISC'];
+const CATEGORIES = ['PROJECTS','LITIGATION','CONTACTS','DESIGN','RESEARCH','ADMINISTRATION','TASTE','ARCHIVES','MISC'];
 
 function categorize(rec) {
     const p = (rec.relPath || '').toLowerCase();
@@ -24,6 +24,22 @@ function categorize(rec) {
     if (p.includes('/people/') || p.includes('/contacts/') ||
         p.includes('contact register') || t.includes('contact register') ||
         p.includes('master contact')) return 'CONTACTS';
+
+    // TASTE — personal aesthetic: music, photos, places, likes, instagram saves
+    if (p.startsWith('taste/')      || p.includes('/taste/')      ||
+        p.startsWith('music/')      || p.includes('/music/')      ||
+        p.startsWith('instagram/')  || p.includes('/instagram/')  ||
+        p.startsWith('photos/')     || p.includes('/photos/')     ||
+        p.startsWith('places/')     || p.includes('/places/')     ||
+        p.startsWith('likes/')      || p.includes('/likes/')      ||
+        p.startsWith('saved/')      || p.includes('/saved/')      ||
+        p.includes('/visited/')     || p.includes('/listened/')   ||
+        p.includes('/aesthetic/')   ||
+        t.startsWith('song:')       || t.startsWith('track:')     ||
+        t.startsWith('album:')      || t.startsWith('artist:')    ||
+        t.startsWith('photo:')      || t.startsWith('place:')     ||
+        t.startsWith('visited:')    || t.startsWith('liked:')     ||
+        t.startsWith('saved:')) return 'TASTE';
 
     // ARCHIVES — explicit archived/inactive
     if (p.includes('02 - archived projects') || p.includes('/archive/') || p.includes('/archived/') ||
