@@ -229,7 +229,7 @@ for (const lk of links) {
 //   For each link we make 5 sub-segments with small perpendicular zigzag.
 //   Stored flat as LineSegments-compatible buffer (10 vertices per link).
 console.log('⚡ Pre-tessellating jagged synapses…');
-const SEG = 5;                          // sub-segments per link
+const SEG = 3;                          // sub-segments per link (down from 5 — same look, 40% smaller payload)
 const VERTS_PER_LINK = SEG * 2;         // line-segment pairs
 const linkPosArr  = new Float32Array(links.length * VERTS_PER_LINK * 3);
 const linkLPArr   = new Float32Array(links.length * VERTS_PER_LINK);

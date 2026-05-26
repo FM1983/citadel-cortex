@@ -21,6 +21,7 @@
 const http  = require('http');
 const fs    = require('fs');
 const path  = require('path');
+const zlib  = require('zlib');
 const { exec, spawn } = require('child_process');
 
 let VAULT;
@@ -160,8 +161,20 @@ http.createServer((req, res) => {
         return res.end(`Not found: ${url}`);
     }
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-    fs.createReadStream(filePath).pipe(res);
+    const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' };
+
+    // ── gzip for text payloads (huge win for the 3MB neural-graph.html) ─────
+    const compressible = ['.html', '.js', '.json', '.css', '.svg', '.md'].includes(ext);
+    const accepts = (req.headers['accept-encoding'] || '');
+    if (compressible && /\bgzip\b/.test(accepts)) {
+        headers['Content-Encoding'] = 'gzip';
+        headers['Vary'] = 'Accept-Encoding';
+        res.writeHead(200, headers);
+        fs.createReadStream(filePath).pipe(zlib.createGzip({ level: 6 })).pipe(res);
+    } else {
+        res.writeHead(200, headers);
+        fs.createReadStream(filePath).pipe(res);
+    }
 }).listen(PORT, '0.0.0.0', () => {
     console.log(`\n◆ CITADEL CORTEX online`);
     console.log(`   local:      http://localhost:${PORT}`);
